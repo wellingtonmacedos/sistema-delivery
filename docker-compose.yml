@@ -1,0 +1,26 @@
+version: "3.9"
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: sistema_delivery
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+  app:
+    build: .
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://user:password@postgres:5432/sistema_delivery?schema=public
+      PIX_API_URL: http://pix:4000
+      PIX_API_KEY: pix_prod_key
+      JWT_SECRET: change_me
+    depends_on:
+      - postgres
+    ports:
+      - "3000:3000"
+volumes:
+  pgdata:

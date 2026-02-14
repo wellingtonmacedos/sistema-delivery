@@ -1,0 +1,42 @@
+{
+  "name": "sistema-delivery",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev --name init",
+    "prisma:seed": "prisma db seed",
+    "db:start": "node scripts/start-pg.js"
+  },
+  "dependencies": {
+    "@prisma/client": "5.12.1",
+    "bcryptjs": "2.4.3",
+    "jsonwebtoken": "9.0.2",
+    "next": "14.1.0",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "zod": "3.22.4"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.18",
+    "embedded-postgres": "^16.4.0",
+    "@types/node": "25.2.3",
+    "@types/react": "19.2.14",
+    "autoprefixer": "^10.4.24",
+    "eslint": "8.56.0",
+    "eslint-config-next": "14.1.0",
+    "postcss": "^8.5.6",
+    "prisma": "5.12.1",
+    "tailwindcss": "^3.3.3",
+    "typescript": "5.4.2"
+  },
+  "prisma": {
+    "seed": "node prisma/seed.js"
+  },
+  "engines": {
+    "node": ">=18.18.0"
+  }
+}

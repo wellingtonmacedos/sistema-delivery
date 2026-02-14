@@ -1,0 +1,239 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum PerfilEstabelecimento {
+  LANCHONETE
+  ACAITERIA
+  PIZZARIA
+}
+
+enum Role {
+  SUPER_ADMIN
+  ADMIN_ESTABELECIMENTO
+}
+
+model Estabelecimento {
+  id        String               @id @default(cuid())
+  nome      String
+  slug      String               @unique
+  perfil    PerfilEstabelecimento
+  ativo     Boolean              @default(true)
+  logoUrl   String?
+  corPrimaria   String           @default("#22c55e")
+  corBot        String           @default("#f3f4f6")
+  corTexto      String           @default("#111827")
+  corFundoChat  String           @default("#f9fafb")
+  produtos  Produto[]
+  pedidos   Pedido[]
+  clientes  Cliente[]
+  admins    AdminUser[]
+  configuracaoAcaiteria ConfiguracaoAcaiteria?
+  acaiSabores           AcaiSabor[]
+  acaiSorvetes          AcaiSorvete[]
+  acaiAcompanhamentos   AcaiAcompanhamento[]
+  acaiCoberturas        AcaiCobertura[]
+  acaiComplementos      AcaiComplemento[]
+  configuracaoPizzaria  ConfiguracaoPizzaria?
+  pizzaTamanhos         PizzaTamanho[]
+  pizzaSabores          PizzaSabor[]
+  createdAt DateTime             @default(now())
+}
+
+model Cliente {
+  id        String   @id @default(cuid())
+  nome      String
+  telefone  String   @unique
+  enderecos Json?
+  pedidos   Pedido[]
+  createdAt DateTime @default(now())
+  estabelecimentoId String?
+  estabelecimento   Estabelecimento? @relation(fields: [estabelecimentoId], references: [id])
+}
+
+model Produto {
+  id         String      @id @default(cuid())
+  categoria  String
+  nome       String
+  descricao  String?
+  preco      Decimal     @db.Decimal(10, 2)
+  adicionais Json?
+  ativo      Boolean     @default(true)
+  itens      ItemPedido[]
+  createdAt  DateTime    @default(now())
+  estabelecimentoId String?
+  estabelecimento   Estabelecimento? @relation(fields: [estabelecimentoId], references: [id])
+}
+
+model Pedido {
+  id              String        @id @default(cuid())
+  clienteId       String
+  cliente         Cliente       @relation(fields: [clienteId], references: [id])
+  status          StatusPedido  @default(aberto)
+  total           Decimal       @db.Decimal(10, 2)
+  formaEntrega    FormaEntrega
+  enderecoEntrega Json?
+  itens           ItemPedido[]
+  pagamento       Pagamento?
+  createdAt       DateTime      @default(now())
+  estabelecimentoId String?
+  estabelecimento   Estabelecimento? @relation(fields: [estabelecimentoId], references: [id])
+}
+
+model ItemPedido {
+  id          String   @id @default(cuid())
+  pedidoId    String
+  pedido      Pedido   @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+  produtoId   String
+  produto     Produto  @relation(fields: [produtoId], references: [id])
+  quantidade  Int
+  adicionais  Json?
+  observacoes String?
+  subtotal    Decimal  @db.Decimal(10, 2)
+}
+
+model Pagamento {
+  id        String   @id @default(cuid())
+  pedidoId  String   @unique
+  pedido    Pedido   @relation(fields: [pedidoId], references: [id])
+  tipo      String
+  valor     Decimal  @db.Decimal(10, 2)
+  status    String
+  txid      String?
+  qrcode    String?
+  createdAt DateTime @default(now())
+}
+
+model Configuracao {
+  id            Int      @id @default(1)
+  taxaEntrega   Decimal? @db.Decimal(10, 2)
+  tempoEstimado Int?
+  pixApiKey     String?
+  pixChave      String?
+}
+
+model AdminUser {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  role         Role     @default(ADMIN_ESTABELECIMENTO)
+  estabelecimentoId String?
+  estabelecimento   Estabelecimento? @relation(fields: [estabelecimentoId], references: [id])
+}
+
+model LogSistema {
+  id        String   @id @default(cuid())
+  tipo      String
+  mensagem  String
+  criadoEm  DateTime @default(now())
+}
+ 
+model ConfiguracaoAcaiteria {
+  id               String @id @default(cuid())
+  estabelecimentoId String @unique
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [id])
+  minSabores       Int    @default(0)
+  maxSabores       Int    @default(3)
+  minSorvetes      Int    @default(0)
+  maxSorvetes      Int    @default(2)
+  minAcompanhamentos Int  @default(0)
+  maxAcompanhamentos Int  @default(4)
+  minCoberturas    Int    @default(0)
+  maxCoberturas    Int    @default(2)
+  minComplementos  Int    @default(0)
+  maxComplementos  Int    @default(3)
+}
+
+model AcaiSabor {
+  id                String @id @default(cuid())
+  nome              String
+  descricao         String?
+  ativo             Boolean @default(true)
+  estabelecimentoId String
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [id])
+  createdAt         DateTime @default(now())
+}
+
+model AcaiSorvete {
+  id                String @id @default(cuid())
+  nome              String
+  ativo             Boolean @default(true)
+  estabelecimentoId String
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [id])
+  createdAt         DateTime @default(now())
+}
+
+model AcaiAcompanhamento {
+  id                String @id @default(cuid())
+  nome              String
+  ativo             Boolean @default(true)
+  estabelecimentoId String
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [id])
+  createdAt         DateTime @default(now())
+}
+
+model AcaiCobertura {
+  id                String @id @default(cuid())
+  nome              String
+  ativo             Boolean @default(true)
+  estabelecimentoId String
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [id])
+  createdAt         DateTime @default(now())
+}
+
+model AcaiComplemento {
+  id                String @id @default(cuid())
+  nome              String
+  valorAdicional    Decimal @db.Decimal(10, 2)
+  ativo             Boolean @default(true)
+  estabelecimentoId String
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [id])
+  createdAt         DateTime @default(now())
+}
+
+model ConfiguracaoPizzaria {
+  id                String @id @default(cuid())
+  estabelecimentoId String @unique
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [id])
+  maxSaboresPorPizza Int @default(2)
+}
+
+model PizzaTamanho {
+  id                String @id @default(cuid())
+  nome              String
+  precoBase         Decimal @db.Decimal(10, 2)
+  ativo             Boolean @default(true)
+  estabelecimentoId String
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [id])
+  createdAt         DateTime @default(now())
+}
+
+model PizzaSabor {
+  id                String @id @default(cuid())
+  nome              String
+  descricao         String?
+  ativo             Boolean @default(true)
+  estabelecimentoId String
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [id])
+  createdAt         DateTime @default(now())
+}
+enum StatusPedido {
+  aberto
+  aguardando_pix
+  pago
+  preparando
+  saiu_para_entrega
+  entregue
+  cancelado
+}
+
+enum FormaEntrega {
+  entrega
+  retirada
+}
