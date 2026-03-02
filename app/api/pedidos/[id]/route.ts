@@ -5,7 +5,15 @@ import { StatusPedido } from '@prisma/client'
 export async function GET(_: NextRequest, { params }: { params: { id: string } }) {
   const pedido = await prisma.pedido.findUnique({
     where: { id: params.id },
-    include: { itens: true, cliente: true, pagamento: true }
+    include: {
+      itens: {
+        include: {
+          produto: { select: { id: true, nome: true } }
+        }
+      },
+      cliente: true,
+      pagamento: true
+    }
   })
   if (!pedido) return Response.json({ error: 'pedido não encontrado' }, { status: 404 })
   return Response.json({ pedido })

@@ -19,10 +19,12 @@ export async function POST(req: NextRequest) {
   const parsed = PedidoCreateSchema.pick({
     clienteTelefone: true,
     itens: true,
-    formaEntrega: true
+    formaEntrega: true,
+    cupomCodigo: true
   }).safeParse(body)
   if (!parsed.success) return Response.json({ error: 'dados inválidos' }, { status: 400 })
-  const { itens, formaEntrega } = parsed.data
+  const { itens, formaEntrega, cupomCodigo: rawCupom } = parsed.data as any
+  const cupomCodigo = (rawCupom ? String(rawCupom).trim().toUpperCase() : '') || ''
   try {
     const est = await resolveTenant(req)
     const produtos = await prisma.produto.findMany({
@@ -62,10 +64,37 @@ export async function POST(req: NextRequest) {
     }
     const totalItens = itensData.reduce((acc, cur) => acc + cur.subtotal, 0)
     const config = await prisma.configuracao.findUnique({ where: { id: 1 } })
-    const taxaEntrega = formaEntrega === FormaEntrega.entrega ? Number(config?.taxaEntrega || 0) : 0
-    const total = totalItens + taxaEntrega
+    const taxaBase =
+      est && est.taxaEntregaPadrao != null ? Number(est.taxaEntregaPadrao) : Number(config?.taxaEntrega || 0)
+    const taxaEntrega = formaEntrega === FormaEntrega.entrega ? taxaBase : 0
+    let desconto = 0
+    if (cupomCodigo && est?.id) {
+      const now = new Date()
+      const cupom = await prisma.cupom.findFirst({
+        where: {
+          estabelecimentoId: est.id,
+          codigo: cupomCodigo,
+          ativo: true,
+          dataInicio: { lte: now },
+          dataFim: { gte: now }
+        }
+      })
+      if (cupom) {
+        if (cupom.valorMinimoPedido == null || totalItens >= Number(cupom.valorMinimoPedido)) {
+          const totalUsos = await prisma.cupomUso.count({ where: { cupomId: cupom.id } })
+          const limiteTotalOk = cupom.limiteTotalUso == null || totalUsos < cupom.limiteTotalUso
+          if (limiteTotalOk) {
+            if (cupom.tipo === 'PERCENTUAL') desconto = (totalItens + taxaEntrega) * (Number(cupom.valor) / 100)
+            else if (cupom.tipo === 'VALOR_FIXO') desconto = Number(cupom.valor)
+            else if (cupom.tipo === 'FRETE_GRATIS') desconto = taxaEntrega
+          }
+        }
+      }
+    }
+    if (desconto < 0) desconto = 0
+    const total = Math.max(0, totalItens + taxaEntrega - desconto)
     if (total <= 0) return Response.json({ error: 'pedido com valor zero' }, { status: 400 })
-    return Response.json({ total, taxaEntrega })
+    return Response.json({ total, taxaEntrega, desconto })
   } catch {
     const itensData = itens.map(i => {
       const p = fallback.find(pp => pp.id === i.produtoId && pp.ativo)

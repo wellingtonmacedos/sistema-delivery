@@ -7,6 +7,8 @@ export default function SaboresPage() {
   const [rows, setRows] = useState<Row[]>([])
   const [form, setForm] = useState<Partial<Row>>({ ativo: true })
   const [loading, setLoading] = useState(true)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editForm, setEditForm] = useState<Partial<Row>>({})
   const [cfg, setCfg] = useState<{ minSabores: number; maxSabores: number } | null>(null)
   async function carregar() {
     try {
@@ -38,6 +40,21 @@ export default function SaboresPage() {
   async function excluir(id: string) {
     const r = await fetch('/api/admin/acaiteria/sabores/' + id, { method: 'DELETE' })
     if (r.ok) carregar()
+  }
+  async function salvarEdicao(id: string) {
+    const body: any = {}
+    if (typeof editForm.nome === 'string') body.nome = editForm.nome
+    if (typeof editForm.descricao === 'string') body.descricao = editForm.descricao
+    const r = await fetch('/api/admin/acaiteria/sabores/' + id, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    })
+    if (r.ok) {
+      setEditingId(null)
+      setEditForm({})
+      carregar()
+    }
   }
   useEffect(() => { carregar() }, [])
   return (
@@ -117,10 +134,63 @@ export default function SaboresPage() {
             <tbody>
               {rows.map(r => (
                 <tr key={r.id} className="border-t hover:bg-gray-50">
-                  <td className="py-2 px-2">{r.nome}</td>
-                  <td className="py-2 px-2">{r.descricao || '-'}</td>
                   <td className="py-2 px-2">
-                    <button onClick={() => excluir(r.id)} className="px-2 py-1 rounded border text-xs hover:bg-gray-100">Excluir</button>
+                    {editingId === r.id ? (
+                      <input
+                        className="w-full border rounded-lg px-2 py-1 text-sm"
+                        value={editForm.nome ?? r.nome}
+                        onChange={e => setEditForm(f => ({ ...f, nome: e.target.value }))}
+                      />
+                    ) : (
+                      r.nome
+                    )}
+                  </td>
+                  <td className="py-2 px-2">
+                    {editingId === r.id ? (
+                      <input
+                        className="w-full border rounded-lg px-2 py-1 text-sm"
+                        value={editForm.descricao ?? r.descricao ?? ''}
+                        onChange={e => setEditForm(f => ({ ...f, descricao: e.target.value }))}
+                      />
+                    ) : (
+                      r.descricao || '-'
+                    )}
+                  </td>
+                  <td className="py-2 px-2">
+                    {editingId === r.id ? (
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => salvarEdicao(r.id)}
+                          className="px-2 py-1 rounded border text-xs hover:bg-gray-100"
+                        >
+                          Salvar
+                        </button>
+                        <button
+                          onClick={() => {
+                            setEditingId(null)
+                            setEditForm({})
+                          }}
+                          className="px-2 py-1 rounded border text-xs hover:bg-gray-100"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => {
+                            setEditingId(r.id)
+                            setEditForm({ nome: r.nome, descricao: r.descricao ?? '' })
+                          }}
+                          className="px-2 py-1 rounded border text-xs hover:bg-gray-100"
+                        >
+                          Editar
+                        </button>
+                        <button onClick={() => excluir(r.id)} className="px-2 py-1 rounded border text-xs hover:bg-gray-100">
+                          Excluir
+                        </button>
+                      </div>
+                    )}
                   </td>
                 </tr>
               ))}

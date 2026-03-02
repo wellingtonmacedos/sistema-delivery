@@ -23,7 +23,21 @@ export async function GET(req: NextRequest) {
     const produtos = await prisma.produto.findMany({
       where,
       orderBy: { nome: 'asc' },
-      select: { id: true, nome: true, descricao: true, preco: true, categoria: true, ativo: true }
+      select: {
+        id: true,
+        nome: true,
+        descricao: true,
+        preco: true,
+        categoria: true,
+        categoriaId: true,
+        ativo: true,
+        fotoUrl: true,
+        adicionais: true,
+        maxSabores: true,
+        maxSorvetes: true,
+        maxAcompanhamentos: true,
+        maxCoberturas: true
+      }
     })
     return Response.json({ produtos })
   } catch {
@@ -38,11 +52,16 @@ export async function POST(req: NextRequest) {
   const body = await req.json()
   const parsed = ProdutoCreateSchema.safeParse({
     categoria: String(body.categoria || '').trim(),
+    categoriaId: body.categoriaId ? String(body.categoriaId) : undefined,
     nome: String(body.nome || '').trim(),
     descricao: body.descricao ? String(body.descricao).trim() : undefined,
     preco: Number(body.preco),
     adicionais: body.adicionais,
-    ativo: body.ativo
+    ativo: body.ativo,
+    maxSabores: body.maxSabores !== undefined && body.maxSabores !== '' && body.maxSabores !== null ? Number(body.maxSabores) : null,
+    maxSorvetes: body.maxSorvetes !== undefined && body.maxSorvetes !== '' && body.maxSorvetes !== null ? Number(body.maxSorvetes) : null,
+    maxAcompanhamentos: body.maxAcompanhamentos !== undefined && body.maxAcompanhamentos !== '' && body.maxAcompanhamentos !== null ? Number(body.maxAcompanhamentos) : null,
+    maxCoberturas: body.maxCoberturas !== undefined && body.maxCoberturas !== '' && body.maxCoberturas !== null ? Number(body.maxCoberturas) : null
   })
   if (!parsed.success) return Response.json({ error: 'dados inválidos' }, { status: 400 })
   const est = await resolveTenant(req)

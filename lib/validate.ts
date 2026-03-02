@@ -12,20 +12,91 @@ export const ClienteQuerySchema = z.object({
 
 export const ProdutoCreateSchema = z.object({
   categoria: z.string().min(1).max(60),
+  categoriaId: z.string().optional(),
   nome: z.string().min(1).max(120),
   descricao: z.string().max(500).optional(),
   preco: z.number().nonnegative(),
   adicionais: z.any().optional(),
-  ativo: z.boolean().optional()
+  ativo: z.boolean().optional(),
+  maxSabores: z.number().int().nonnegative().optional().nullable(),
+  maxSorvetes: z.number().int().nonnegative().optional().nullable(),
+  maxAcompanhamentos: z.number().int().nonnegative().optional().nullable(),
+  maxCoberturas: z.number().int().nonnegative().optional().nullable()
 })
 
 export const ProdutoUpdateSchema = z.object({
   categoria: z.string().min(1).max(60).optional(),
+  categoriaId: z.string().optional(),
   nome: z.string().min(1).max(120).optional(),
   descricao: z.string().max(500).optional().nullable(),
   preco: z.number().nonnegative().optional(),
   adicionais: z.any().optional(),
+  ativo: z.boolean().optional(),
+  maxSabores: z.number().int().nonnegative().optional().nullable(),
+  maxSorvetes: z.number().int().nonnegative().optional().nullable(),
+  maxAcompanhamentos: z.number().int().nonnegative().optional().nullable(),
+  maxCoberturas: z.number().int().nonnegative().optional().nullable()
+})
+
+export const CategoriaCreateSchema = z.object({
+  nome: z.string().min(1).max(120),
+  icone: z.string().max(8).optional(),
+  imagemUrl: z.string().optional().nullable(),
+  ordemExibicao: z.number().int().nonnegative().optional(),
   ativo: z.boolean().optional()
+})
+
+export const CategoriaUpdateSchema = z.object({
+  nome: z.string().min(1).max(120).optional(),
+  icone: z.string().max(8).optional(),
+  imagemUrl: z.string().optional().nullable(),
+  ordemExibicao: z.number().int().nonnegative().optional(),
+  ativo: z.boolean().optional()
+})
+
+export const LanchoneteVariacaoCreateSchema = z.object({
+  produtoId: z.string().min(1),
+  nome: z.string().min(1).max(120),
+  valorAdicional: z.number().nonnegative(),
+  obrigatoria: z.boolean().optional(),
+  ativo: z.boolean().optional()
+})
+
+export const LanchoneteVariacaoUpdateSchema = z.object({
+  nome: z.string().min(1).max(120).optional(),
+  valorAdicional: z.number().nonnegative().optional(),
+  obrigatoria: z.boolean().optional(),
+  ativo: z.boolean().optional()
+})
+
+export const LanchoneteAdicionalCreateSchema = z.object({
+  produtoId: z.string().min(1),
+  nome: z.string().min(1).max(120),
+  valor: z.number().nonnegative(),
+  maximoPermitido: z.number().int().positive().optional(),
+  obrigatorio: z.boolean().optional(),
+  ativo: z.boolean().optional()
+})
+
+export const LanchoneteAdicionalUpdateSchema = z.object({
+  nome: z.string().min(1).max(120).optional(),
+  valor: z.number().nonnegative().optional(),
+  maximoPermitido: z.number().int().positive().optional(),
+  obrigatorio: z.boolean().optional(),
+  ativo: z.boolean().optional()
+})
+
+export const ComboCreateSchema = z.object({
+  nome: z.string().min(1).max(120),
+  descricao: z.string().max(500).optional(),
+  precoFixo: z.number().nonnegative(),
+  permitirSubstituicao: z.boolean().optional(),
+  ativo: z.boolean().optional()
+})
+
+export const ComboItemCreateSchema = z.object({
+  comboId: z.string().min(1),
+  produtoId: z.string().min(1)
 })
 
 export const PedidoCreateSchema = z.object({
@@ -41,7 +112,8 @@ export const PedidoCreateSchema = z.object({
   formaEntrega: z.enum(['entrega', 'retirada']),
   enderecoEntrega: z.any().nullable().optional(),
   metodoPagamento: z.enum(['pix', 'dinheiro', 'cartao']).optional(),
-  trocoPara: z.number().nonnegative().optional()
+  trocoPara: z.number().nonnegative().optional(),
+  cupomCodigo: z.string().max(32).optional()
 })
 
 export const PixCreateSchema = z.object({

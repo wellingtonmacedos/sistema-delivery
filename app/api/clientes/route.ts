@@ -11,9 +11,14 @@ export async function GET(req: NextRequest) {
   const parsed = ClienteQuerySchema.safeParse({ telefone: searchParams.get('telefone') || '' })
   if (!parsed.success) return Response.json({ error: 'dados inválidos' }, { status: 400 })
   const est = await resolveTenant(req)
-  const cliente = await prisma.cliente.findFirst({
+  let cliente = await prisma.cliente.findFirst({
     where: { telefone: parsed.data.telefone, estabelecimentoId: est?.id || undefined }
   })
+  if (!cliente) {
+    cliente = await prisma.cliente.findFirst({
+      where: { telefone: parsed.data.telefone }
+    })
+  }
   return Response.json({ cliente })
 }
 

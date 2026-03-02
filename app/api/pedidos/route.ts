@@ -7,15 +7,67 @@ import { logSistema } from '@/lib/log'
 import { revalidateTag } from 'next/cache'
 import { resolveTenant } from '@/lib/tenant'
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const { searchParams } = new URL(req.url)
+  const telefone = (searchParams.get('telefone') || '').trim()
+  const limit = Math.min(Number(searchParams.get('limit') || 5), 20)
+  const est = await resolveTenant(req)
+  // Modo compatível com o painel: sem telefone => retornar listagem completa (como antes)
+  if (!telefone) {
+    const pedidos = await prisma.pedido.findMany({
+      where: est?.id ? { estabelecimentoId: est.id } : {},
+      orderBy: { createdAt: 'desc' },
+      include: {
+        itens: {
+          select: {
+            id: true,
+            quantidade: true,
+            subtotal: true,
+            produtoId: true,
+            adicionais: true,
+            observacoes: true,
+            produto: { select: { id: true, nome: true, fotoUrl: true, categoria: true } }
+          }
+        },
+        cliente: { select: { nome: true, telefone: true } },
+        pagamento: { select: { status: true, txid: true, tipo: true } },
+        cupom: { select: { codigo: true } }
+      }
+    })
+    return Response.json({ pedidos })
+  }
+  // Filtro por telefone: usado pelo chat em "Meus Pedidos"
+  const where: any = {}
+  const cliente = await prisma.cliente.findFirst({
+    where: { telefone, estabelecimentoId: est?.id || undefined }
+  })
+  if (cliente) {
+    where.clienteId = cliente.id
+  } else {
+    const clienteGlobal = await prisma.cliente.findFirst({ where: { telefone } })
+    if (clienteGlobal) where.clienteId = clienteGlobal.id
+    else return Response.json({ pedidos: [] })
+  }
+  if (est?.id) where.estabelecimentoId = est.id
   const pedidos = await prisma.pedido.findMany({
+    where,
     orderBy: { createdAt: 'desc' },
+    take: limit,
     include: {
       itens: {
-        select: { id: true, quantidade: true, subtotal: true, produtoId: true }
+        select: {
+          id: true,
+          quantidade: true,
+          subtotal: true,
+          produtoId: true,
+          adicionais: true,
+          observacoes: true,
+          produto: { select: { id: true, nome: true, fotoUrl: true, categoria: true } }
+        }
       },
       cliente: { select: { nome: true, telefone: true } },
-      pagamento: { select: { status: true, txid: true } }
+      pagamento: { select: { status: true, txid: true, tipo: true } },
+      cupom: { select: { codigo: true } }
     }
   })
   return Response.json({ pedidos })
@@ -28,18 +80,28 @@ export async function POST(req: NextRequest) {
   const parsed = PedidoCreateSchema.safeParse(body)
   if (!parsed.success) return Response.json({ error: 'dados inválidos' }, { status: 400 })
   const { clienteTelefone, itens, formaEntrega, enderecoEntrega, metodoPagamento, trocoPara } = parsed.data as any
+  const cupomCodigo: string = (body?.cupomCodigo ? String(body.cupomCodigo).trim().toUpperCase() : '') || ''
   const est = await resolveTenant(req)
-  const cliente = await prisma.cliente.findFirst({
+  let cliente = await prisma.cliente.findFirst({
     where: { telefone: clienteTelefone, estabelecimentoId: est?.id || undefined }
   })
   if (!cliente) {
+    cliente = await prisma.cliente.findFirst({ where: { telefone: clienteTelefone } })
+  }
+  if (!cliente) {
     return Response.json({ error: 'cliente não encontrado' }, { status: 404 })
   }
-  const produtos = await prisma.produto.findMany({
-    where: { id: { in: itens.map((i: any) => i.produtoId) }, ativo: true, estabelecimentoId: est?.id || undefined }
+  const estId = est?.id || (cliente.estabelecimentoId as string | null) || null
+  let produtos = await prisma.produto.findMany({
+    where: { id: { in: itens.map((i: any) => i.produtoId) }, ativo: true, estabelecimentoId: estId || undefined }
   })
   if (produtos.length !== itens.length) {
-    return Response.json({ error: 'produto inválido' }, { status: 400 })
+    produtos = await prisma.produto.findMany({
+      where: { id: { in: itens.map((i: any) => i.produtoId) }, ativo: true }
+    })
+    if (produtos.length !== itens.length) {
+      return Response.json({ error: 'produto inválido' }, { status: 400 })
+    }
   }
   const perfil = est?.perfil || 'LANCHONETE'
   const itensData: any[] = []
@@ -78,8 +140,35 @@ export async function POST(req: NextRequest) {
   }
   const totalItens = itensData.reduce((acc, cur) => acc + cur.subtotal, 0)
   const config = await prisma.configuracao.findUnique({ where: { id: 1 } })
-  const taxaEntrega = formaEntrega === FormaEntrega.entrega ? Number(config?.taxaEntrega || 0) : 0
-  const total = totalItens + taxaEntrega
+  const taxaBase =
+    est && est.taxaEntregaPadrao != null ? Number(est.taxaEntregaPadrao) : Number(config?.taxaEntrega || 0)
+  const taxaEntrega = formaEntrega === FormaEntrega.entrega ? taxaBase : 0
+  let desconto = 0
+  let cupomId: string | null = null
+  if (cupomCodigo && estId) {
+    const now = new Date()
+    const cupom = await prisma.cupom.findFirst({
+      where: {
+        estabelecimentoId: estId,
+        codigo: cupomCodigo,
+        ativo: true,
+        dataInicio: { lte: now },
+        dataFim: { gte: now }
+      }
+    })
+    if (cupom) {
+      const totalUsos = await prisma.cupomUso.count({ where: { cupomId: cupom.id } })
+      const limiteTotalOk = cupom.limiteTotalUso == null || totalUsos < cupom.limiteTotalUso
+      if (limiteTotalOk && (cupom.valorMinimoPedido == null || totalItens >= Number(cupom.valorMinimoPedido))) {
+        if (cupom.tipo === 'PERCENTUAL') desconto = (totalItens + taxaEntrega) * (Number(cupom.valor) / 100)
+        else if (cupom.tipo === 'VALOR_FIXO') desconto = Number(cupom.valor)
+        else if (cupom.tipo === 'FRETE_GRATIS') desconto = taxaEntrega
+        cupomId = cupom.id
+      }
+    }
+  }
+  if (desconto < 0) desconto = 0
+  const total = Math.max(0, totalItens + taxaEntrega - desconto)
   if (total <= 0) {
     return Response.json({ error: 'pedido com valor zero' }, { status: 400 })
   }
@@ -88,13 +177,55 @@ export async function POST(req: NextRequest) {
       clienteId: cliente.id,
       status: metodoPagamento && metodoPagamento !== 'pix' ? StatusPedido.preparando : StatusPedido.aberto,
       total,
+      valorDesconto: desconto || null,
       formaEntrega,
       enderecoEntrega,
       itens: { create: itensData },
-      estabelecimentoId: est?.id || null
+      estabelecimentoId: estId,
+      cupomId: cupomId || null
     },
     include: { itens: true }
   })
+  if (formaEntrega === FormaEntrega.entrega && enderecoEntrega) {
+    try {
+      const current: any = cliente.enderecos as any
+      let lista: any[] = []
+      if (Array.isArray(current)) lista = [...current]
+      else if (current && typeof current === 'object') lista = [current]
+      const base = {
+        rua: String((enderecoEntrega as any).rua || '').trim(),
+        numero: String((enderecoEntrega as any).numero || '').trim(),
+        bairro: String((enderecoEntrega as any).bairro || '').trim(),
+        complemento: (enderecoEntrega as any).complemento
+          ? String((enderecoEntrega as any).complemento).trim()
+          : undefined,
+        referencia: (enderecoEntrega as any).referencia
+          ? String((enderecoEntrega as any).referencia).trim()
+          : undefined
+      }
+      if (base.rua && base.numero && base.bairro) {
+        const exists = lista.some(
+          e => e && e.rua === base.rua && e.numero === base.numero && e.bairro === base.bairro
+        )
+        if (!exists) {
+          for (const e of lista) {
+            if (e && typeof e === 'object') (e as any).padrao = false
+          }
+          const novo = { ...base, padrao: true }
+          lista = [novo, ...lista]
+          await prisma.cliente.update({
+            where: { id: cliente.id },
+            data: { enderecos: lista }
+          })
+        }
+      }
+    } catch {}
+  }
+  if (cupomId) {
+    await prisma.cupomUso.create({
+      data: { cupomId, clienteId: cliente.id, pedidoId: pedido.id }
+    })
+  }
   if (metodoPagamento && metodoPagamento !== 'pix') {
     await prisma.pagamento.upsert({
       where: { pedidoId: pedido.id },

@@ -13,6 +13,19 @@ enum PerfilEstabelecimento {
   PIZZARIA
 }
 
+enum TemaChat {
+  PADRAO
+  DARK
+  MODERNO
+  MINIMAL
+}
+
+enum BordaBalao {
+  ARREDONDADO
+  MEDIO
+  RETO
+}
+
 enum Role {
   SUPER_ADMIN
   ADMIN_ESTABELECIMENTO
@@ -29,6 +42,21 @@ model Estabelecimento {
   corBot        String           @default("#f3f4f6")
   corTexto      String           @default("#111827")
   corFundoChat  String           @default("#f9fafb")
+  nomeBot          String        @default("Atendimento")
+  mensagemBoasVindas String? 
+  avatarBotUrl     String?
+  temaChat         TemaChat      @default(PADRAO)
+  bordaBaloes      BordaBalao    @default(ARREDONDADO)
+  sombraBaloes     Boolean       @default(false)
+  descricao     String?
+  telefone      String?
+  endereco      Json?
+  horarioAbertura   String?
+  horarioFechamento String?
+  diasAtivos    Json?
+  taxaEntregaPadrao Decimal?     @db.Decimal(10, 2)
+  permitirRetirada Boolean       @default(true)
+  aberto        Boolean          @default(true)
   produtos  Produto[]
   pedidos   Pedido[]
   clientes  Cliente[]
@@ -42,6 +70,9 @@ model Estabelecimento {
   configuracaoPizzaria  ConfiguracaoPizzaria?
   pizzaTamanhos         PizzaTamanho[]
   pizzaSabores          PizzaSabor[]
+  categorias            Categoria[]
+  combos                Combo[]
+  cupons                Cupom[]
   createdAt DateTime             @default(now())
 }
 
@@ -51,6 +82,7 @@ model Cliente {
   telefone  String   @unique
   enderecos Json?
   pedidos   Pedido[]
+  cuponsUsos CupomUso[]
   createdAt DateTime @default(now())
   estabelecimentoId String?
   estabelecimento   Estabelecimento? @relation(fields: [estabelecimentoId], references: [id])
@@ -61,13 +93,94 @@ model Produto {
   categoria  String
   nome       String
   descricao  String?
+  fotoUrl    String?
   preco      Decimal     @db.Decimal(10, 2)
   adicionais Json?
+  destaque   Boolean     @default(false)
+  promocaoAtiva      Boolean    @default(false)
+  precoPromocional   Decimal?   @db.Decimal(10, 2)
+  controlarEstoque   Boolean    @default(false)
+  estoque            Int?
+  tempoPreparoMinutos Int?
   ativo      Boolean     @default(true)
+  ordemExibicao Int? 
+  dataInicioPromocao DateTime?
+  dataFimPromocao    DateTime?
+  horarioInicio      String?
+  horarioFim         String?
+
+  // Limites específicos por produto (Açaiteria)
+  maxSabores         Int?
+  maxSorvetes        Int?
+  maxAcompanhamentos Int?
+  maxCoberturas      Int?
+
   itens      ItemPedido[]
+  combosItens ComboItem[]
   createdAt  DateTime    @default(now())
   estabelecimentoId String?
   estabelecimento   Estabelecimento? @relation(fields: [estabelecimentoId], references: [id])
+  categoriaId       String?
+  categoriaRef      Categoria? @relation(fields: [categoriaId], references: [id])
+  variacoes         Variacao[]
+  adicionaisRef     Adicional[]
+}
+
+model Categoria {
+  id              String   @id @default(cuid())
+  estabelecimentoId String
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [id])
+  nome            String
+  icone           String?
+  imagemUrl       String?
+  ordemExibicao   Int? 
+  ativo           Boolean  @default(true)
+  produtos        Produto[]
+  createdAt       DateTime @default(now())
+}
+
+model Variacao {
+  id          String   @id @default(cuid())
+  produtoId   String
+  produto     Produto  @relation(fields: [produtoId], references: [id])
+  nome        String
+  valorAdicional Decimal @db.Decimal(10, 2)
+  obrigatoria Boolean  @default(false)
+  ativo       Boolean  @default(true)
+  createdAt   DateTime @default(now())
+}
+
+model Adicional {
+  id          String   @id @default(cuid())
+  produtoId   String
+  produto     Produto  @relation(fields: [produtoId], references: [id])
+  nome        String
+  valor       Decimal  @db.Decimal(10, 2)
+  maximoPermitido Int? 
+  obrigatorio Boolean  @default(false)
+  ativo       Boolean  @default(true)
+  createdAt   DateTime @default(now())
+}
+
+model Combo {
+  id              String   @id @default(cuid())
+  estabelecimentoId String
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [id])
+  nome            String
+  descricao       String?
+  precoFixo       Decimal  @db.Decimal(10, 2)
+  permitirSubstituicao Boolean @default(false)
+  ativo           Boolean  @default(true)
+  itens           ComboItem[]
+  createdAt       DateTime @default(now())
+}
+
+model ComboItem {
+  id        String  @id @default(cuid())
+  comboId   String
+  combo     Combo   @relation(fields: [comboId], references: [id])
+  produtoId String
+  produto   Produto @relation(fields: [produtoId], references: [id])
 }
 
 model Pedido {
@@ -76,6 +189,7 @@ model Pedido {
   cliente         Cliente       @relation(fields: [clienteId], references: [id])
   status          StatusPedido  @default(aberto)
   total           Decimal       @db.Decimal(10, 2)
+  valorDesconto   Decimal?      @db.Decimal(10, 2)
   formaEntrega    FormaEntrega
   enderecoEntrega Json?
   itens           ItemPedido[]
@@ -83,6 +197,9 @@ model Pedido {
   createdAt       DateTime      @default(now())
   estabelecimentoId String?
   estabelecimento   Estabelecimento? @relation(fields: [estabelecimentoId], references: [id])
+  cupomId         String?
+  cupom           Cupom?        @relation(fields: [cupomId], references: [id])
+  cuponsUsos      CupomUso[]
 }
 
 model ItemPedido {
@@ -236,4 +353,42 @@ enum StatusPedido {
 enum FormaEntrega {
   entrega
   retirada
+}
+
+enum TipoCupom {
+  PERCENTUAL
+  VALOR_FIXO
+  FRETE_GRATIS
+}
+
+model Cupom {
+  id                String   @id @default(cuid())
+  estabelecimentoId String
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [id])
+  codigo            String
+  descricao         String?
+  tipo              TipoCupom
+  valor             Decimal  @db.Decimal(10, 2)
+  valorMinimoPedido Decimal? @db.Decimal(10, 2)
+  limiteTotalUso    Int?
+  limitePorCliente  Int?
+  dataInicio        DateTime
+  dataFim           DateTime
+  ativo             Boolean  @default(true)
+  usos              CupomUso[]
+  pedidos           Pedido[]
+  createdAt         DateTime @default(now())
+
+  @@unique([estabelecimentoId, codigo])
+}
+
+model CupomUso {
+  id        String   @id @default(cuid())
+  cupomId   String
+  cupom     Cupom    @relation(fields: [cupomId], references: [id])
+  clienteId String?
+  cliente   Cliente? @relation(fields: [clienteId], references: [id])
+  pedidoId  String
+  pedido    Pedido   @relation(fields: [pedidoId], references: [id])
+  usedAt    DateTime @default(now())
 }

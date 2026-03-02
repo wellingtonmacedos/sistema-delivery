@@ -32,7 +32,13 @@ export async function GET(req: NextRequest) {
       corPrimaria: est.corPrimaria,
       corBot: est.corBot,
       corTexto: est.corTexto,
-      corFundoChat: est.corFundoChat
+      corFundoChat: est.corFundoChat,
+      nomeBot: est.nomeBot,
+      mensagemBoasVindas: est.mensagemBoasVindas,
+      avatarBotUrl: est.avatarBotUrl || null,
+      temaChat: est.temaChat,
+      bordaBaloes: est.bordaBaloes,
+      sombraBaloes: est.sombraBaloes
     }
   })
 }
@@ -41,15 +47,21 @@ export async function POST(req: NextRequest) {
   const admin = getAdmin(req)
   if (!admin) return Response.json({ error: 'unauthorized' }, { status: 401 })
   const estId = admin.estabelecimentoId || null
-  if (!estId && admin.role !== 'SUPER_ADMIN') return Response.json({ error: 'unauthorized' }, { status: 401 })
+  if (!estId || admin.role !== 'ADMIN_ESTABELECIMENTO') return Response.json({ error: 'unauthorized' }, { status: 401 })
   const body = await req.json()
   const data: any = {}
   if (typeof body.corPrimaria === 'string') data.corPrimaria = body.corPrimaria
   if (typeof body.corBot === 'string') data.corBot = body.corBot
   if (typeof body.corTexto === 'string') data.corTexto = body.corTexto
   if (typeof body.corFundoChat === 'string') data.corFundoChat = body.corFundoChat
+  if (typeof body.nomeBot === 'string' && body.nomeBot.trim()) data.nomeBot = body.nomeBot.trim()
+  if (typeof body.mensagemBoasVindas === 'string') data.mensagemBoasVindas = body.mensagemBoasVindas.trim() || null
+  if (typeof body.avatarBotUrl === 'string') data.avatarBotUrl = body.avatarBotUrl || null
+  if (typeof body.temaChat === 'string') data.temaChat = body.temaChat
+  if (typeof body.bordaBaloes === 'string') data.bordaBaloes = body.bordaBaloes
+  if (typeof body.sombraBaloes === 'boolean') data.sombraBaloes = body.sombraBaloes
   const est = await prisma.estabelecimento.update({
-    where: { id: estId || (await prisma.estabelecimento.findFirst({ where: { ativo: true } }))!.id },
+    where: { id: estId },
     data
   })
   return Response.json({ ok: true, estabelecimento: est })

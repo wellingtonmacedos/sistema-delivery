@@ -11,11 +11,25 @@ export async function GET(req: NextRequest) {
       slug: est.slug,
       perfil: est.perfil,
       ativo: est.ativo,
+      aberto: est.aberto,
+      descricao: est.descricao || null,
+      telefone: est.telefone || null,
+      horarioAbertura: est.horarioAbertura || null,
+      horarioFechamento: est.horarioFechamento || null,
+      diasAtivos: est.diasAtivos || null,
+      taxaEntregaPadrao: est.taxaEntregaPadrao,
+      permitirRetirada: est.permitirRetirada,
       logoUrl: est.logoUrl || null,
       corPrimaria: est.corPrimaria,
       corBot: est.corBot,
       corTexto: est.corTexto,
-      corFundoChat: est.corFundoChat
+      corFundoChat: est.corFundoChat,
+      nomeBot: est.nomeBot,
+      mensagemBoasVindas: est.mensagemBoasVindas || null,
+      avatarBotUrl: est.avatarBotUrl || null,
+      temaChat: est.temaChat,
+      bordaBaloes: est.bordaBaloes,
+      sombraBaloes: est.sombraBaloes
     }
   })
 }

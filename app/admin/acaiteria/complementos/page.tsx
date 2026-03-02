@@ -7,6 +7,8 @@ export default function ComplementosPage() {
   const [rows, setRows] = useState<Row[]>([])
   const [form, setForm] = useState<Partial<Row>>({ ativo: true, valorAdicional: 0 })
   const [loading, setLoading] = useState(true)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editForm, setEditForm] = useState<Partial<Row>>({})
   async function carregar() {
     try {
       const r = await fetch('/api/admin/acaiteria/complementos')
@@ -32,6 +34,21 @@ export default function ComplementosPage() {
   async function excluir(id: string) {
     const r = await fetch('/api/admin/acaiteria/complementos/' + id, { method: 'DELETE' })
     if (r.ok) carregar()
+  }
+  async function salvarEdicao(id: string) {
+    const body: any = {}
+    if (typeof editForm.nome === 'string') body.nome = editForm.nome
+    if (typeof editForm.valorAdicional === 'number') body.valorAdicional = editForm.valorAdicional
+    const r = await fetch('/api/admin/acaiteria/complementos/' + id, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    })
+    if (r.ok) {
+      setEditingId(null)
+      setEditForm({})
+      carregar()
+    }
   }
   useEffect(() => { carregar() }, [])
   const currency = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' })
@@ -74,10 +91,65 @@ export default function ComplementosPage() {
             <tbody>
               {rows.map(r => (
                 <tr key={r.id} className="border-t hover:bg-gray-50">
-                  <td className="py-2 px-2">{r.nome}</td>
-                  <td className="py-2 px-2">{currency.format(Number(r.valorAdicional))}</td>
                   <td className="py-2 px-2">
-                    <button onClick={() => excluir(r.id)} className="px-2 py-1 rounded border text-xs hover:bg-gray-100">Excluir</button>
+                    {editingId === r.id ? (
+                      <input
+                        className="w-full border rounded-lg px-2 py-1 text-sm"
+                        value={editForm.nome ?? r.nome}
+                        onChange={e => setEditForm(f => ({ ...f, nome: e.target.value }))}
+                      />
+                    ) : (
+                      r.nome
+                    )}
+                  </td>
+                  <td className="py-2 px-2">
+                    {editingId === r.id ? (
+                      <input
+                        className="w-full border rounded-lg px-2 py-1 text-sm"
+                        type="number"
+                        step="0.01"
+                        value={editForm.valorAdicional ?? Number(r.valorAdicional)}
+                        onChange={e => setEditForm(f => ({ ...f, valorAdicional: Number(e.target.value) }))}
+                      />
+                    ) : (
+                      currency.format(Number(r.valorAdicional))
+                    )}
+                  </td>
+                  <td className="py-2 px-2">
+                    {editingId === r.id ? (
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => salvarEdicao(r.id)}
+                          className="px-2 py-1 rounded border text-xs hover:bg-gray-100"
+                        >
+                          Salvar
+                        </button>
+                        <button
+                          onClick={() => {
+                            setEditingId(null)
+                            setEditForm({})
+                          }}
+                          className="px-2 py-1 rounded border text-xs hover:bg-gray-100"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => {
+                            setEditingId(r.id)
+                            setEditForm({ nome: r.nome, valorAdicional: Number(r.valorAdicional) })
+                          }}
+                          className="px-2 py-1 rounded border text-xs hover:bg-gray-100"
+                        >
+                          Editar
+                        </button>
+                        <button onClick={() => excluir(r.id)} className="px-2 py-1 rounded border text-xs hover:bg-gray-100">
+                          Excluir
+                        </button>
+                      </div>
+                    )}
                   </td>
                 </tr>
               ))}
