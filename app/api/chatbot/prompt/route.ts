@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server'
-import { resolveTenant } from '@/lib/tenant'
+import { resolveTenant, safePerfil } from '@/lib/tenant'
 import path from 'path'
 import fs from 'fs'
 
@@ -15,13 +15,15 @@ export async function GET(req: NextRequest) {
   const est = await resolveTenant(req)
   const base = process.cwd()
   let filePath: string | null = null
-  const perfil = est?.perfil || 'LANCHONETE'
+  const perfil = safePerfil(est?.perfil) || 'LANCHONETE'
   if (perfil === 'ACAITERIA') {
     filePath = path.join(base, 'chatbot', 'acaiteria_prompt.txt')
   } else if (perfil === 'LANCHONETE') {
     filePath = path.join(base, 'chatbot-lanchonete.prompt')
   } else if (perfil === 'PIZZARIA') {
     filePath = path.join(base, 'chatbot', 'pizzaria_prompt.txt')
+  } else if (perfil === 'DISTRIBUIDORA') {
+    filePath = path.join(base, 'chatbot', 'distribuidora_prompt.txt')
   }
   if (!filePath) return Response.json({ error: 'perfil não suportado' }, { status: 404 })
   const content = readFileSafe(filePath)

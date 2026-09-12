@@ -1,10 +1,12 @@
 {
-  "/chat/[slug]/page": "app/chat/[slug]/page.js",
-  "/api/estabelecimento/route": "app/api/estabelecimento/route.js",
-  "/api/clientes/route": "app/api/clientes/route.js",
-  "/api/produtos/route": "app/api/produtos/route.js",
-  "/api/acaiteria/opcoes/route": "app/api/acaiteria/opcoes/route.js",
-  "/api/produtos/categorias/route": "app/api/produtos/categorias/route.js",
-  "/api/pedidos/route": "app/api/pedidos/route.js",
-  "/api/pedidos/[id]/route": "app/api/pedidos/[id]/route.js"
+  "/super-admin/page": "app/super-admin/page.js",
+  "/api/admin/auth/logout/route": "app/api/admin/auth/logout/route.js",
+  "/api/admin/auth/login/route": "app/api/admin/auth/login/route.js",
+  "/api/admin/session/route": "app/api/admin/session/route.js",
+  "/api/admin/configuracoes/estabelecimento/route": "app/api/admin/configuracoes/estabelecimento/route.js",
+  "/admin/page": "app/admin/page.js",
+  "/admin/configuracoes/page": "app/admin/configuracoes/page.js",
+  "/admin/login/page": "app/admin/login/page.js",
+  "/admin/configuracoes/chat/page": "app/admin/configuracoes/chat/page.js",
+  "/admin/configuracoes/estabelecimento/page": "app/admin/configuracoes/estabelecimento/page.js"
 }

@@ -22,7 +22,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.18",
-    "embedded-postgres": "^16.4.0",
+    "embedded-postgres": "18.4.0-beta.17",
     "@types/node": "25.2.3",
     "@types/react": "19.2.14",
     "autoprefixer": "^10.4.24",

@@ -1,5 +1,8 @@
 import { NextRequest } from 'next/server'
 import { prisma } from './db'
+export { safePerfil, perfilLabel, PERFIS_VALIDOS } from './perfil'
+import type { PerfilValido } from './perfil'
+export type { PerfilValido }
 
 export async function resolveTenant(req: NextRequest) {
   const slug = req.headers.get('x-estabelecimento-slug') || new URL(req.url).searchParams.get('est') || undefined
@@ -10,3 +13,4 @@ export async function resolveTenant(req: NextRequest) {
   const est = await prisma.estabelecimento.findFirst({ where: { ativo: true }, orderBy: { createdAt: 'asc' } })
   return est
 }
+

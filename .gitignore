@@ -30,3 +30,16 @@ ts-debug.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local infra & backups
+.backups/
+backups/
+*.sql
+*.ps1
+.pg-portable/
+.wsl-distros/
+.trae/
+CREDENCIAIS*
+*.txt
+!chatbot/*.txt
+public/uploads/

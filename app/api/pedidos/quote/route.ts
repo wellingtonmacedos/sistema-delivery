@@ -3,14 +3,13 @@ import { prisma } from '@/lib/db'
 import { FormaEntrega } from '@prisma/client'
 import { PedidoCreateSchema } from '@/lib/validate'
 import { rateLimit, keyFromRequestHeaders } from '@/lib/rateLimit'
-import { resolveTenant } from '@/lib/tenant'
-const fallback = [
-  { id: 'x-burger', nome: 'X-Burger', preco: 18.9, categoria: 'Lanches', ativo: true },
-  { id: 'x-salada', nome: 'X-Salada', preco: 20.9, categoria: 'Lanches', ativo: true },
-  { id: 'batata', nome: 'Batata Frita', preco: 16.0, categoria: 'Porções', ativo: true },
-  { id: 'refri', nome: 'Refrigerante Lata', preco: 6.0, categoria: 'Bebidas', ativo: true },
-  { id: 'pudim', nome: 'Pudim', preco: 8.0, categoria: 'Sobremesas', ativo: true }
-]
+import { resolveTenant, safePerfil } from '@/lib/tenant'
+
+type PedidoItemInput = {
+  produtoId: string
+  quantidade: number
+  adicionais?: any
+}
 
 export async function POST(req: NextRequest) {
   const key = 'pedidos:quote:' + keyFromRequestHeaders(req.headers)
@@ -23,7 +22,11 @@ export async function POST(req: NextRequest) {
     cupomCodigo: true
   }).safeParse(body)
   if (!parsed.success) return Response.json({ error: 'dados inválidos' }, { status: 400 })
-  const { itens, formaEntrega, cupomCodigo: rawCupom } = parsed.data as any
+  const { itens, formaEntrega, cupomCodigo: rawCupom } = parsed.data as {
+    itens: PedidoItemInput[]
+    formaEntrega: FormaEntrega
+    cupomCodigo?: unknown
+  }
   const cupomCodigo = (rawCupom ? String(rawCupom).trim().toUpperCase() : '') || ''
   try {
     const est = await resolveTenant(req)
@@ -33,9 +36,9 @@ export async function POST(req: NextRequest) {
     if (produtos.length !== itens.length) {
       return Response.json({ error: 'produto inválido' }, { status: 400 })
     }
-    const perfil = est?.perfil || 'LANCHONETE'
+    const perfil = safePerfil(est?.perfil) || 'LANCHONETE'
     const itensData = []
-    for (const i of itens as any[]) {
+    for (const i of itens) {
       const p = produtos.find(pp => pp.id === i.produtoId)!
       let base = Number(p.preco)
       let extras = 0
@@ -59,10 +62,23 @@ export async function POST(req: NextRequest) {
           i.adicionais.sabores = i.adicionais.sabores.slice(0, maxSab)
         }
       }
+      if (perfil === 'DISTRIBUIDORA' && i.adicionais?.tipoCompra === 'embalagem' && p.precoEmbalagem != null) {
+        base = Number(p.precoEmbalagem)
+      }
       const subtotal = (base + extras) * i.quantidade
       itensData.push({ produtoId: p.id, quantidade: i.quantidade, subtotal })
     }
     const totalItens = itensData.reduce((acc, cur) => acc + cur.subtotal, 0)
+    if (est?.valorMinimoPedido != null) {
+      const min = Number(est.valorMinimoPedido)
+      if (min > 0 && totalItens < min) {
+        const fmt = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+        return Response.json(
+          { error: `Valor mínimo do pedido é ${fmt(min)} (atual: ${fmt(totalItens)})` },
+          { status: 400 }
+        )
+      }
+    }
     const config = await prisma.configuracao.findUnique({ where: { id: 1 } })
     const taxaBase =
       est && est.taxaEntregaPadrao != null ? Number(est.taxaEntregaPadrao) : Number(config?.taxaEntrega || 0)
@@ -95,17 +111,8 @@ export async function POST(req: NextRequest) {
     const total = Math.max(0, totalItens + taxaEntrega - desconto)
     if (total <= 0) return Response.json({ error: 'pedido com valor zero' }, { status: 400 })
     return Response.json({ total, taxaEntrega, desconto })
-  } catch {
-    const itensData = itens.map(i => {
-      const p = fallback.find(pp => pp.id === i.produtoId && pp.ativo)
-      if (!p) return { subtotal: 0, quantidade: 0 }
-      const subtotal = Number(p.preco) * i.quantidade
-      return { subtotal, quantidade: i.quantidade }
-    })
-    const totalItens = itensData.reduce((acc, cur) => acc + cur.subtotal, 0)
-    const taxaEntrega = formaEntrega === FormaEntrega.entrega ? 0 : 0
-    const total = totalItens + taxaEntrega
-    if (total <= 0) return Response.json({ error: 'pedido com valor zero' }, { status: 400 })
-    return Response.json({ total, taxaEntrega })
+  } catch (e: any) {
+    const msg = e?.message ? String(e.message) : 'quote_indisponivel'
+    return Response.json({ error: msg, fallback: true, total: null }, { status: 503 })
   }
 }

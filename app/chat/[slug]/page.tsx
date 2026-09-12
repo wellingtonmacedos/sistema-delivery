@@ -17,5 +17,5 @@ export default async function ChatSlugPage({ params }: { params: { slug: string 
       </main>
     )
   }
-  return <ChatPage tenantSlug={params.slug} />
+  return <ChatPage />
 }

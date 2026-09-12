@@ -2,23 +2,23 @@ import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db'
 import { ProdutoCreateSchema } from '@/lib/validate'
 import { rateLimit, keyFromRequestHeaders } from '@/lib/rateLimit'
-import { revalidateTag } from 'next/cache'
 import { resolveTenant } from '@/lib/tenant'
-const fallback = [
-  { id: 'x-burger', nome: 'X-Burger', descricao: 'Pão, carne, queijo', preco: 18.9, categoria: 'Lanches', ativo: true },
-  { id: 'x-salada', nome: 'X-Salada', descricao: 'Pão, carne, queijo, salada', preco: 20.9, categoria: 'Lanches', ativo: true },
-  { id: 'batata', nome: 'Batata Frita', descricao: 'Porção média', preco: 16.0, categoria: 'Porções', ativo: true },
-  { id: 'refri', nome: 'Refrigerante Lata', descricao: '350ml', preco: 6.0, categoria: 'Bebidas', ativo: true },
-  { id: 'pudim', nome: 'Pudim', descricao: 'Fatia', preco: 8.0, categoria: 'Sobremesas', ativo: true }
-]
+import { revalidateTag } from 'next/cache'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const categoria = searchParams.get('categoria') || undefined
+  const idsRaw = searchParams.get('ids') || undefined
   const est = await resolveTenant(req)
-  const where = categoria
-    ? { categoria, ativo: true, estabelecimentoId: est?.id || undefined }
-    : { ativo: true, estabelecimentoId: est?.id || undefined }
+  const ids = idsRaw
+    ? idsRaw.split(',').map(s => s.trim()).filter(Boolean)
+    : undefined
+  let where: any = { ativo: true, estabelecimentoId: est?.id || undefined }
+  if (ids && ids.length) {
+    where = { id: { in: ids }, ativo: true, estabelecimentoId: est?.id || undefined }
+  } else if (categoria) {
+    where = { categoria, ativo: true, estabelecimentoId: est?.id || undefined }
+  }
   try {
     const produtos = await prisma.produto.findMany({
       where,
@@ -36,13 +36,21 @@ export async function GET(req: NextRequest) {
         maxSabores: true,
         maxSorvetes: true,
         maxAcompanhamentos: true,
-        maxCoberturas: true
+        maxCoberturas: true,
+        marca: true,
+        unidade: true,
+        qtdPorEmbalagem: true,
+        precoEmbalagem: true,
+        destaque: true,
+        controlarEstoque: true,
+        estoque: true,
+        tempoPreparoMinutos: true,
+        ordemExibicao: true
       }
     })
     return Response.json({ produtos })
   } catch {
-    const prods = categoria ? fallback.filter(f => f.categoria === categoria) : fallback
-    return Response.json({ produtos: prods })
+    return Response.json({ produtos: [], fallback: true, error: 'produtos_indisponiveis' }, { status: 503 })
   }
 }
 
@@ -50,18 +58,29 @@ export async function POST(req: NextRequest) {
   const key = 'produtos:' + keyFromRequestHeaders(req.headers)
   if (!rateLimit(key, 50, 60_000)) return Response.json({ error: 'rate limit' }, { status: 429 })
   const body = await req.json()
+  const toNumOrNull = (v: any) => v !== undefined && v !== '' && v !== null ? Number(v) : null
   const parsed = ProdutoCreateSchema.safeParse({
     categoria: String(body.categoria || '').trim(),
     categoriaId: body.categoriaId ? String(body.categoriaId) : undefined,
     nome: String(body.nome || '').trim(),
-    descricao: body.descricao ? String(body.descricao).trim() : undefined,
+    descricao: body.descricao ? String(body.descricao).trim() : null,
     preco: Number(body.preco),
     adicionais: body.adicionais,
     ativo: body.ativo,
-    maxSabores: body.maxSabores !== undefined && body.maxSabores !== '' && body.maxSabores !== null ? Number(body.maxSabores) : null,
-    maxSorvetes: body.maxSorvetes !== undefined && body.maxSorvetes !== '' && body.maxSorvetes !== null ? Number(body.maxSorvetes) : null,
-    maxAcompanhamentos: body.maxAcompanhamentos !== undefined && body.maxAcompanhamentos !== '' && body.maxAcompanhamentos !== null ? Number(body.maxAcompanhamentos) : null,
-    maxCoberturas: body.maxCoberturas !== undefined && body.maxCoberturas !== '' && body.maxCoberturas !== null ? Number(body.maxCoberturas) : null
+    maxSabores: toNumOrNull(body.maxSabores),
+    maxSorvetes: toNumOrNull(body.maxSorvetes),
+    maxAcompanhamentos: toNumOrNull(body.maxAcompanhamentos),
+    maxCoberturas: toNumOrNull(body.maxCoberturas),
+    marca: body.marca !== undefined && body.marca !== '' ? String(body.marca).trim() : null,
+    unidade: body.unidade !== undefined && body.unidade !== '' ? String(body.unidade).trim() : null,
+    qtdPorEmbalagem: toNumOrNull(body.qtdPorEmbalagem),
+    precoEmbalagem: toNumOrNull(body.precoEmbalagem),
+    destaque: typeof body.destaque === 'boolean' ? body.destaque : undefined,
+    ordemExibicao: toNumOrNull(body.ordemExibicao),
+    controlarEstoque: typeof body.controlarEstoque === 'boolean' ? body.controlarEstoque : undefined,
+    estoque: toNumOrNull(body.estoque),
+    tempoPreparoMinutos: toNumOrNull(body.tempoPreparoMinutos),
+    fotoUrl: body.fotoUrl !== undefined && body.fotoUrl !== '' ? String(body.fotoUrl).trim() : null
   })
   if (!parsed.success) return Response.json({ error: 'dados inválidos' }, { status: 400 })
   const est = await resolveTenant(req)

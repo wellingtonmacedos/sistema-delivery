@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { safePerfil } from '@/lib/perfil'
 
 type PedidoItem = {
   id: string
@@ -121,17 +122,73 @@ export default function AdminPedidos() {
   const [viewMode, setViewMode] = useState<'cards' | 'kanban'>('cards')
   const [acaiOpcoes, setAcaiOpcoes] = useState<any | null>(null)
   const [estabelecimentos, setEstabelecimentos] = useState<Estabelecimento[]>([])
-  const [selectedEst, setSelectedEst] = useState<string>('')
+  const [selectedEstId, setSelectedEstId] = useState<string>('')
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false)
+  const [erro, setErro] = useState<string | null>(null)
   const carregadoRef = useRef(false)
   const knownIdsRef = useRef<Set<string>>(new Set())
   const [somAtivo, setSomAtivo] = useState(false)
 
-  async function carregar() {
+  async function carregarAdmin() {
     try {
-      const res = await fetch('/api/pedidos', { cache: 'no-store' })
+      const r = await fetch('/api/admin/configuracoes/estabelecimento', { credentials: 'include' })
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}))
+        setErro(d?.error || 'Sessão expirada. Faça login novamente.')
+        return
+      }
+      const d = await r.json()
+      const role = d?.admin?.role || ''
+      setIsSuperAdmin(role === 'SUPER_ADMIN')
+      if (role === 'SUPER_ADMIN') {
+        try {
+          const estsR = await fetch('/api/super-admin/estabelecimentos', { credentials: 'include' })
+          if (estsR.ok) {
+            const data = await estsR.json()
+            const arr = Array.isArray(data?.estabelecimentos) ? data.estabelecimentos : []
+            setEstabelecimentos(arr)
+            if (!selectedEstId && arr.length > 0) {
+              const defaultId =
+                arr.find((e: any) => e.id === d?.estabelecimento?.id)?.id ||
+                [...arr].sort((a: any, b: any) => (a.createdAt || '').localeCompare(b.createdAt || ''))[0]
+                  ?.id ||
+                arr[0].id
+              setSelectedEstId(defaultId)
+            } else if (!selectedEstId) {
+              setSelectedEstId(d?.estabelecimento?.id || '')
+            }
+          }
+        } catch {}
+      } else {
+        setSelectedEstId(d?.estabelecimento?.id || '')
+      }
+    } catch (e: any) {
+      setErro('Não foi possível carregar o usuário administrador.')
+    }
+  }
+
+  async function carregar() {
+    if (!selectedEstId) {
+      setPedidos([])
+      setLoading(false)
+      return
+    }
+    try {
+      setErro(null)
+      const url = `/api/admin/pedidos?estId=${encodeURIComponent(selectedEstId)}`
+      const res = await fetch(url, { credentials: 'include', cache: 'no-store' as any })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        if (res.status === 401) {
+          setErro('Sessão expirada. Faça login novamente.')
+        } else {
+          setErro(d?.error || 'Erro ao carregar pedidos.')
+        }
+        setPedidos([])
+        return
+      }
       const data = await res.json()
-      const lista: Pedido[] = data.pedidos || []
-      // Detectar novos pedidos
+      const lista: Pedido[] = data?.pedidos || []
       if (carregadoRef.current) {
         const known = knownIdsRef.current
         const novos = lista.filter(p => !known.has(p.id))
@@ -140,6 +197,8 @@ export default function AdminPedidos() {
       knownIdsRef.current = new Set(lista.map(p => p.id))
       setPedidos(lista)
       carregadoRef.current = true
+    } catch {
+      setErro('Erro de rede ao carregar pedidos. Tente novamente.')
     } finally {
       setLoading(false)
     }
@@ -155,35 +214,45 @@ export default function AdminPedidos() {
   }
 
   useEffect(() => {
-    carregar()
-    carregarAcaiOpcoes()
-    if (typeof window !== 'undefined') {
-      try {
-        const flag = window.localStorage.getItem('adminSoundEnabled')
-        if (flag === '1') {
-          newOrderAudioEnabled = true
-          if (!newOrderAudio) {
-            newOrderAudio = new Audio('/sounds/beep.mp3')
+    let cancelled = false
+    async function init() {
+      await carregarAdmin()
+      if (!cancelled) {
+        carregar()
+        carregarAcaiOpcoes()
+      }
+      if (typeof window !== 'undefined' && !cancelled) {
+        try {
+          const flag = window.localStorage.getItem('adminSoundEnabled')
+          if (flag === '1') {
+            newOrderAudioEnabled = true
+            if (!newOrderAudio) {
+              newOrderAudio = new Audio('/sounds/beep.mp3')
+            }
+            setSomAtivo(true)
           }
-          setSomAtivo(true)
-        }
-      } catch {}
+        } catch {}
+      }
+    }
+    init()
+    return () => {
+      cancelled = true
     }
   }, [])
 
   useEffect(() => {
-    if (selectedEst || estabelecimentos.length === 0) {
-      carregar()
-    }
+    if (selectedEstId) carregar()
     const t = setInterval(() => {
-      if (selectedEst || estabelecimentos.length === 0) carregar()
+      if (selectedEstId) carregar()
     }, 10_000)
     return () => clearInterval(t)
-  }, [selectedEst, estabelecimentos])
+  }, [selectedEstId])
 
-  function handleEstChange(slug: string) {
-    setSelectedEst(slug)
-    localStorage.setItem('adminSelectedEst', slug)
+  function handleEstChange(id: string) {
+    setSelectedEstId(id)
+    try {
+      window.localStorage.setItem('adminSelectedEstId', id)
+    } catch {}
     carregadoRef.current = false
     setPedidos([])
     setLoading(true)
@@ -205,11 +274,20 @@ export default function AdminPedidos() {
   }
 
   async function alterarStatus(id: string, status: StatusPedido) {
-    await fetch('/api/pedidos/' + id, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status })
-    })
+    try {
+      const r = await fetch('/api/admin/pedidos/' + id, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status })
+      })
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}))
+        setErro(d?.error || 'Não foi possível alterar o status.')
+      }
+    } catch {
+      setErro('Erro de rede ao alterar status.')
+    }
     await carregar()
   }
 
@@ -225,11 +303,7 @@ export default function AdminPedidos() {
       if (filtroRapido === 'pagos' && p.status !== 'pago') return false
       if (filtroRapido === 'preparando' && p.status !== 'preparando') return false
       if (filtroRapido === 'finalizados' && p.status !== 'entregue') return false
-      if (filtroRapido === 'cancelados' && p.status === 'cancelado') {
-        // ok
-      } else if (filtroRapido === 'cancelados') {
-        return false
-      }
+      if (filtroRapido === 'cancelados' && p.status !== 'cancelado') return false
       if (!busca.trim()) return true
       const term = busca.trim().toLowerCase()
       return (
@@ -254,7 +328,6 @@ export default function AdminPedidos() {
     const nome = i.produto?.nome || 'Produto'
     const adicionais = i.adicionais || {}
 
-    // Sabores
     const sabIds = Array.isArray(adicionais.sabores)
       ? adicionais.sabores
       : adicionais.saborId
@@ -266,7 +339,6 @@ export default function AdminPedidos() {
         : sabIds
     if (sabores.length === 0 && adicionais.saborNome) sabores.push(adicionais.saborNome)
 
-    // Sorvetes
     const sorvIds = Array.isArray(adicionais.sorvetes)
       ? adicionais.sorvetes
       : adicionais.sorveteId
@@ -279,7 +351,6 @@ export default function AdminPedidos() {
     if (sorvetes.length === 0 && adicionais.sorveteNome) sorvetes.push(adicionais.sorveteNome)
     if (sorvetes.length === 0 && adicionais.sorveteEscolhido === true) sorvetes.push('Sem sorvete')
 
-    // Acompanhamentos
     const acompIds = Array.isArray(adicionais.acompanhamentos) ? adicionais.acompanhamentos : []
     const acompanhamentos =
       acaiOpcoes && Array.isArray(acaiOpcoes.acompanhamentos)
@@ -288,7 +359,6 @@ export default function AdminPedidos() {
             .map((a: any) => a.nome)
         : acompIds
 
-    // Coberturas
     const cobIds = Array.isArray(adicionais.coberturas)
       ? adicionais.coberturas
       : adicionais.coberturaId
@@ -301,7 +371,6 @@ export default function AdminPedidos() {
             .map((c: any) => c.nome)
         : cobIds
 
-    // Complementos
     const compIds = Array.isArray(adicionais.complementos) ? adicionais.complementos : []
     const complementos =
       acaiOpcoes && Array.isArray(acaiOpcoes.complementos)
@@ -488,22 +557,35 @@ export default function AdminPedidos() {
   }
 
   const pedidosAgrupados = useMemo(() => agrupadoPorStatus(pedidosFiltrados), [pedidosFiltrados])
+  const perfilLabelEst = (perfil: any) =>
+    perfil === 'ACAITERIA'
+      ? 'Açaiteria'
+      : perfil === 'PIZZARIA'
+      ? 'Pizzaria'
+      : perfil === 'DISTRIBUIDORA'
+      ? 'Distribuidora'
+      : 'Lanchonete'
 
   return (
     <main className="p-4 md:p-8 flex-1 overflow-auto bg-gray-50">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-800">Gerenciar Pedidos</h1>
-          {estabelecimentos.length > 1 && (
+          {erro && (
+            <div className="mt-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-1.5">
+              {erro}
+            </div>
+          )}
+          {estabelecimentos.length > 1 && isSuperAdmin && (
             <div className="mt-2">
               <select
-                  value={selectedEst}
-                  onChange={e => handleEstChange(e.target.value)}
-                  className="bg-white border border-gray-300 rounded px-3 py-1 text-sm font-medium text-gray-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-black"
-                >
+                value={selectedEstId}
+                onChange={e => handleEstChange(e.target.value)}
+                className="bg-white border border-gray-300 rounded px-3 py-1 text-sm font-medium text-gray-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-black"
+              >
                 {estabelecimentos.map(e => (
-                  <option key={e.id} value={e.slug}>
-                    {e.nome} ({e.perfil})
+                  <option key={e.id} value={e.id}>
+                    {e.nome} ({perfilLabelEst(safePerfil(e.perfil))})
                   </option>
                 ))}
               </select>

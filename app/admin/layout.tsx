@@ -1,19 +1,17 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import Link from 'next/link'
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
-
-  if (pathname === '/admin/login') {
-    return <>{children}</>
-  }
+  const router = useRouter()
 
   const [open, setOpen] = useState(false)
   const [session, setSession] = useState<{ email: string; role: string } | null>(null)
-  const [est, setEst] = useState<{ nome?: string; slug?: string; perfil?: 'LANCHONETE' | 'ACAITERIA' | 'PIZZARIA' } | null>(null)
+  const [est, setEst] = useState<{ nome?: string; slug?: string; perfil?: 'LANCHONETE' | 'ACAITERIA' | 'PIZZARIA' | 'DISTRIBUIDORA' } | null>(null)
   useEffect(() => {
+    if (pathname === '/admin/login') return
     fetch('/api/admin/session', { credentials: 'include' })
       .then(r => (r.ok ? r.json() : null))
       .then(d => {
@@ -31,22 +29,28 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           })
       })
       .catch(() => {})
-  }, [])
-  const items = (() => {
-    const base = [
-      { href: '/admin', label: 'Dashboard', icon: '📊' },
-      { href: '/admin/pedidos', label: 'Pedidos', icon: '🧾' },
-      { href: '/admin/clientes', label: 'Clientes', icon: '👥' },
-      { href: '/admin/cupons', label: 'Cupons', icon: '🎟️' },
-      { href: '/admin/configuracoes', label: 'Configurações gerais', icon: '⚙️' },
-      { href: '/admin/configuracoes/chat', label: 'Chatbot', icon: '💬' },
-      { href: '/admin/configuracoes/estabelecimento', label: 'Estabelecimento', icon: '🏪' }
-    ]
-    if (est?.perfil === 'LANCHONETE') {
-      return [{ href: '/admin/produtos', label: 'Produtos', icon: '🛒' }, ...base]
-    }
-    return base
-  })()
+  }, [pathname])
+
+  if (pathname === '/admin/login') {
+    return <>{children}</>
+  }
+
+  async function fazerLogout() {
+    try {
+      await fetch('/api/admin/auth/logout', { method: 'POST', credentials: 'include' })
+    } catch {}
+    router.push('/admin/login')
+    router.refresh()
+  }
+  const items = [
+    { href: '/admin', label: 'Dashboard', icon: '📊' },
+    { href: '/admin/pedidos', label: 'Pedidos', icon: '🧾' },
+    { href: '/admin/clientes', label: 'Clientes', icon: '👥' },
+    { href: '/admin/cupons', label: 'Cupons', icon: '🎟️' },
+    { href: '/admin/configuracoes', label: 'Configurações gerais', icon: '⚙️' },
+    { href: '/admin/configuracoes/chat', label: 'Chatbot', icon: '💬' },
+    { href: '/admin/configuracoes/estabelecimento', label: 'Estabelecimento', icon: '🏪' }
+  ]
   const title = (() => {
     const map: Record<string, string> = {
       '/admin': 'Dashboard',
@@ -60,9 +64,17 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     }
     if (pathname.startsWith('/admin/acaiteria')) return 'Açaiteria'
     if (pathname.startsWith('/admin/pizzaria')) return 'Pizzaria'
+    if (pathname.startsWith('/admin/distribuidora')) return 'Distribuidora'
     return map[pathname] || 'Admin'
   })()
-  const perfilLabel = est?.perfil === 'ACAITERIA' ? 'Açaiteria' : est?.perfil === 'PIZZARIA' ? 'Pizzaria' : 'Lanchonete'
+  const perfilLabel =
+    est?.perfil === 'ACAITERIA'
+      ? 'Açaiteria'
+      : est?.perfil === 'PIZZARIA'
+      ? 'Pizzaria'
+      : est?.perfil === 'DISTRIBUIDORA'
+      ? 'Distribuidora'
+      : 'Lanchonete'
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100">
       <aside
@@ -252,6 +264,43 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               </Link>
             </>
           )}
+          {est?.perfil === 'DISTRIBUIDORA' && (
+            <>
+              <div className="mt-4 mb-1 text-[11px] px-5 text-gray-400 uppercase tracking-wide">
+                Distribuidora
+              </div>
+              <Link
+                href="/admin/distribuidora/categorias"
+                className={`group relative flex items-center gap-3 px-5 py-2.5 text-sm transition-all ${
+                  pathname.startsWith('/admin/distribuidora/categorias')
+                    ? 'bg-white/5 text-white'
+                    : 'text-gray-300 hover:bg-white/5 hover:text-white'
+                }`}
+                onClick={() => setOpen(false)}
+              >
+                {pathname.startsWith('/admin/distribuidora/categorias') && (
+                  <span className="absolute inset-y-1 left-0 w-0.5 rounded-full bg-emerald-400" />
+                )}
+                <span className="text-lg">🗂️</span>
+                <span>Categorias</span>
+              </Link>
+              <Link
+                href="/admin/distribuidora/produtos"
+                className={`group relative flex items-center gap-3 px-5 py-2.5 text-sm transition-all ${
+                  pathname.startsWith('/admin/distribuidora/produtos')
+                    ? 'bg-white/5 text-white'
+                    : 'text-gray-300 hover:bg-white/5 hover:text-white'
+                }`}
+                onClick={() => setOpen(false)}
+              >
+                {pathname.startsWith('/admin/distribuidora/produtos') && (
+                  <span className="absolute inset-y-1 left-0 w-0.5 rounded-full bg-emerald-400" />
+                )}
+                <span className="text-lg">🛒</span>
+                <span>Produtos</span>
+              </Link>
+            </>
+          )}
         </nav>
         <div className="mt-auto px-5 py-4 text-xs text-gray-400 border-t border-white/5">
           <div className="flex items-center justify-between">
@@ -259,13 +308,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               <div className="font-medium text-gray-200">{session?.email || 'admin'}</div>
               <div className="text-[11px] text-gray-500">{session?.role || ''}</div>
             </div>
-            <Link
-              href="/admin/login"
+            <button
+              onClick={fazerLogout}
               className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] text-gray-100 hover:bg-white/10 transition"
             >
               <span>⏏</span>
               <span>Sair</span>
-            </Link>
+            </button>
           </div>
         </div>
       </aside>

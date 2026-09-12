@@ -11,6 +11,7 @@ enum PerfilEstabelecimento {
   LANCHONETE
   ACAITERIA
   PIZZARIA
+  DISTRIBUIDORA
 }
 
 enum TemaChat {
@@ -57,6 +58,10 @@ model Estabelecimento {
   taxaEntregaPadrao Decimal?     @db.Decimal(10, 2)
   permitirRetirada Boolean       @default(true)
   aberto        Boolean          @default(true)
+  raioAtendimentoKm Decimal?     @db.Decimal(10, 2)
+  tempoEntregaMinutos Int?
+  valorMinimoPedido Decimal?     @db.Decimal(10, 2)
+  entregaHabilitada Boolean      @default(true)
   produtos  Produto[]
   pedidos   Pedido[]
   clientes  Cliente[]
@@ -108,6 +113,10 @@ model Produto {
   dataFimPromocao    DateTime?
   horarioInicio      String?
   horarioFim         String?
+  marca             String?
+  unidade           String?
+  qtdPorEmbalagem   Int?
+  precoEmbalagem    Decimal?   @db.Decimal(10, 2)
 
   // Limites específicos por produto (Açaiteria)
   maxSabores         Int?

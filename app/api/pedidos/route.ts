@@ -5,12 +5,13 @@ import { PedidoCreateSchema } from '@/lib/validate'
 import { rateLimit, keyFromRequestHeaders } from '@/lib/rateLimit'
 import { logSistema } from '@/lib/log'
 import { revalidateTag } from 'next/cache'
-import { resolveTenant } from '@/lib/tenant'
+import { resolveTenant, safePerfil } from '@/lib/tenant'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const telefone = (searchParams.get('telefone') || '').trim()
   const limit = Math.min(Number(searchParams.get('limit') || 5), 20)
+  const ultimo = ['1', 'true', 'yes'].includes(String(searchParams.get('ultimo') || '').toLowerCase())
   const est = await resolveTenant(req)
   // Modo compatível com o painel: sem telefone => retornar listagem completa (como antes)
   if (!telefone) {
@@ -49,6 +50,43 @@ export async function GET(req: NextRequest) {
     else return Response.json({ pedidos: [] })
   }
   if (est?.id) where.estabelecimentoId = est.id
+  if (ultimo) {
+    const pedido = await prisma.pedido.findFirst({
+      where,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        itens: {
+          select: {
+            id: true,
+            quantidade: true,
+            subtotal: true,
+            produtoId: true,
+            adicionais: true,
+            observacoes: true,
+            produto: {
+              select: {
+                id: true,
+                nome: true,
+                descricao: true,
+                preco: true,
+                categoria: true,
+                fotoUrl: true,
+                adicionais: true,
+                maxSabores: true,
+                maxSorvetes: true,
+                maxAcompanhamentos: true,
+                maxCoberturas: true
+              }
+            }
+          }
+        },
+        cliente: { select: { nome: true, telefone: true } },
+        pagamento: { select: { status: true, txid: true, tipo: true } },
+        cupom: { select: { codigo: true } }
+      }
+    })
+    return Response.json({ pedido })
+  }
   const pedidos = await prisma.pedido.findMany({
     where,
     orderBy: { createdAt: 'desc' },
@@ -103,7 +141,7 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: 'produto inválido' }, { status: 400 })
     }
   }
-  const perfil = est?.perfil || 'LANCHONETE'
+  const perfil = safePerfil(est?.perfil) || 'LANCHONETE'
   const itensData: any[] = []
   for (const i of itens as any[]) {
     const p = produtos.find(pp => pp.id === i.produtoId)!
@@ -129,6 +167,9 @@ export async function POST(req: NextRequest) {
         i.adicionais.sabores = i.adicionais.sabores.slice(0, maxSab)
       }
     }
+    if (perfil === 'DISTRIBUIDORA' && i.adicionais?.tipoCompra === 'embalagem' && p.precoEmbalagem != null) {
+      base = Number(p.precoEmbalagem)
+    }
     const subtotal = (base + extras) * i.quantidade
     itensData.push({
       produtoId: p.id,
@@ -139,6 +180,16 @@ export async function POST(req: NextRequest) {
     })
   }
   const totalItens = itensData.reduce((acc, cur) => acc + cur.subtotal, 0)
+  if (est?.valorMinimoPedido != null) {
+    const min = Number(est.valorMinimoPedido)
+    if (min > 0 && totalItens < min) {
+      const fmt = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+      return Response.json(
+        { error: `Valor mínimo do pedido é ${fmt(min)} (atual: ${fmt(totalItens)})` },
+        { status: 400 }
+      )
+    }
+  }
   const config = await prisma.configuracao.findUnique({ where: { id: 1 } })
   const taxaBase =
     est && est.taxaEntregaPadrao != null ? Number(est.taxaEntregaPadrao) : Number(config?.taxaEntrega || 0)

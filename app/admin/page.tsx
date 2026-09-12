@@ -1,10 +1,11 @@
 import Link from 'next/link'
 import { getCurrentAdminWithEstabelecimento } from '@/lib/authAdmin'
 import { prisma } from '@/lib/db'
+import { safePerfil, perfilLabel } from '@/lib/perfil'
 
 export default async function AdminHome() {
   const ctx = await getCurrentAdminWithEstabelecimento()
-  const perfil = ctx?.estabelecimento?.perfil || 'LANCHONETE'
+  const perfil = safePerfil(ctx?.estabelecimento?.perfil) || 'LANCHONETE'
   const estId = ctx?.estabelecimento?.id || null
   const start = new Date()
   start.setHours(0, 0, 0, 0)
@@ -32,7 +33,7 @@ export default async function AdminHome() {
   }
   const currency = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' })
   const cor = ctx?.estabelecimento?.corPrimaria || '#111827'
-  const perfilLabel = ctx?.estabelecimento?.perfil === 'ACAITERIA' ? 'Açaiteria' : ctx?.estabelecimento?.perfil === 'PIZZARIA' ? 'Pizzaria' : 'Lanchonete'
+  const perfilLabelText = perfilLabel(ctx?.estabelecimento?.perfil)
   return (
     <main className="min-h-screen">
       <div className="max-w-6xl mx-auto">
@@ -43,7 +44,7 @@ export default async function AdminHome() {
             <div className="mt-1 flex items-center gap-2 text-sm text-slate-600">
               <span>{ctx?.estabelecimento?.nome || '—'}</span>
               <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-slate-700">
-                {perfilLabel}
+                {perfilLabelText}
               </span>
             </div>
           </div>
@@ -164,6 +165,16 @@ export default async function AdminHome() {
                 <>
                   <QuickLink href="/admin/pizzaria/tamanhos" label="Tamanhos" icon="🍕" cor={cor} />
                   <QuickLink href="/admin/pizzaria/sabores" label="Sabores" icon="🧀" cor={cor} />
+                  <QuickLink href="/admin/pedidos" label="Pedidos" icon="🧾" cor={cor} />
+                  <QuickLink href="/admin/clientes" label="Clientes" icon="👥" cor={cor} />
+                  <QuickLink href="/admin/configuracoes" label="Configurações" icon="⚙️" cor={cor} />
+                  <QuickLink href="/admin/configuracoes/estabelecimento" label="Estabelecimento" icon="🏪" cor={cor} />
+                </>
+              )}
+              {perfil === 'DISTRIBUIDORA' && (
+                <>
+                  <QuickLink href="/admin/distribuidora/categorias" label="Categorias" icon="🗂️" cor={cor} />
+                  <QuickLink href="/admin/distribuidora/produtos" label="Produtos" icon="🛒" cor={cor} />
                   <QuickLink href="/admin/pedidos" label="Pedidos" icon="🧾" cor={cor} />
                   <QuickLink href="/admin/clientes" label="Clientes" icon="👥" cor={cor} />
                   <QuickLink href="/admin/configuracoes" label="Configurações" icon="⚙️" cor={cor} />

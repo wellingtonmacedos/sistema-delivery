@@ -33,21 +33,51 @@ async function main() {
         nome: 'Lanchonete Demo',
         slug: estSlug,
         perfil: 'LANCHONETE',
-        ativo: true
+        ativo: true,
+        telefone: '11977776666',
+        descricao: 'A melhor hamburgueria artesanal da região!',
+        valorMinimoPedido: 15,
+        taxaEntregaPadrao: 8,
+        horarioAbertura: '18:00',
+        horarioFechamento: '23:30',
+        corPrimaria: '#f97316',
+        nomeBot: 'Atendimento',
+        mensagemBoasVindas: 'Olá! Bem-vindo à nossa lanchonete 🍔. Qual o seu pedido hoje?'
+      }
+    })
+  } else {
+    est = await prisma.estabelecimento.update({
+      where: { id: est.id },
+      data: {
+        telefone: est.telefone || '11977776666',
+        valorMinimoPedido: est.valorMinimoPedido || 15,
+        taxaEntregaPadrao: est.taxaEntregaPadrao || 8
       }
     })
   }
 
   const superEmail = 'super@admin.local'
   const superExists = await prisma.adminUser.findUnique({ where: { email: superEmail } })
+  const superData = {
+    email: superEmail,
+    role: 'SUPER_ADMIN',
+    estabelecimentoId: null,
+    passwordHash: ''
+  }
   if (!superExists) {
-    const hash = await bcrypt.hash('super123', 10)
+    superData.passwordHash = await bcrypt.hash('super123', 10)
     await prisma.adminUser.create({
       data: {
-        email: superEmail,
-        passwordHash: hash,
-        role: 'SUPER_ADMIN'
+        email: superData.email,
+        passwordHash: superData.passwordHash,
+        role: superData.role,
+        estabelecimentoId: superData.estabelecimentoId
       }
+    })
+  } else {
+    await prisma.adminUser.update({
+      where: { id: superExists.id },
+      data: { estabelecimentoId: null }
     })
   }
 

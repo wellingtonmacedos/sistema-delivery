@@ -1,5 +1,9 @@
 'use client'
+import ArcadeMenu from '@/components/arcade/ArcadeMenu'
+import { sendOrderToWhatsApp } from '@/lib/whatsapp/sendOrderToWhatsApp'
+import { useParams, useSearchParams } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
+import { safePerfil, perfilLabel } from '@/lib/perfil'
 
 type Produto = {
   id: string
@@ -15,10 +19,18 @@ type Produto = {
   maxCoberturas?: number | null
 }
 type ItemCarrinho = { produto: Produto; quantidade: number; adicionais?: any }
+type WhatsOrder = {
+  codigo: string
+  cliente_nome: string
+  cliente_telefone: string
+  total: number
+  items: { quantidade: number; nome: string }[]
+}
 type Estado =
   | 'aguardando_telefone'
   | 'aguardando_nome'
   | 'menu_principal'
+  | 'pesquisando_produto'
   | 'escolhendo_categoria'
   | 'escolhendo_produto'
   | 'escolhendo_quantidade'
@@ -35,7 +47,13 @@ type TemaChatCfg = {
   sombraBaloes?: boolean
 }
 
-export default function ChatPage({ tenantSlug }: { tenantSlug?: string }) {
+export default function ChatPage() {
+  const params = useParams()
+  const searchParams = useSearchParams()
+  const tenantSlug =
+    typeof (params as any)?.slug === 'string' ? String((params as any).slug)
+    : searchParams?.get('est') ? String(searchParams.get('est'))
+    : undefined
   const [estado, setEstado] = useState<Estado>('aguardando_telefone')
   const [mensagens, setMensagens] = useState<{ de: 'bot' | 'user'; texto: string }[]>([])
   const [telefone, setTelefone] = useState('')
@@ -56,13 +74,19 @@ export default function ChatPage({ tenantSlug }: { tenantSlug?: string }) {
   const [pix, setPix] = useState<{ txid: string; qrcode: string; copiaECola: string } | null>(null)
   const [loading, setLoading] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
-  const [perfil, setPerfil] = useState<'LANCHONETE' | 'ACAITERIA' | 'PIZZARIA'>('LANCHONETE')
+  const [perfil, setPerfil] = useState<'LANCHONETE' | 'ACAITERIA' | 'PIZZARIA' | 'DISTRIBUIDORA'>('LANCHONETE')
   const [acaiOpcoes, setAcaiOpcoes] = useState<any | null>(null)
   const [pizzaOpcoes, setPizzaOpcoes] = useState<any | null>(null)
   const [adicionaisSelecionados, setAdicionaisSelecionados] = useState<any>({})
   const [trocoValor, setTrocoValor] = useState<string>('')
   const [meusPedidos, setMeusPedidos] = useState<any[]>([])
   const [meusPedidosAberto, setMeusPedidosAberto] = useState(false)
+  const [mostrarArcade, setMostrarArcade] = useState(false)
+  const [mostrarAcoesPedido, setMostrarAcoesPedido] = useState(false)
+  const [mostrarAcoesWhatsApp, setMostrarAcoesWhatsApp] = useState(false)
+  const [mostrarAcoesRepetirPedido, setMostrarAcoesRepetirPedido] = useState(false)
+  const [ultimoPedido, setUltimoPedido] = useState<any | null>(null)
+  const [pedidoWhatsApp, setPedidoWhatsApp] = useState<WhatsOrder | null>(null)
   const [meusPedidosLoading, setMeusPedidosLoading] = useState(false)
   const [pedidoDetalhe, setPedidoDetalhe] = useState<any | null>(null)
   const [pedidoDetalheLoading, setPedidoDetalheLoading] = useState(false)
@@ -77,6 +101,7 @@ export default function ChatPage({ tenantSlug }: { tenantSlug?: string }) {
     nome?: string
     nomeBot?: string
     avatarBotUrl?: string | null
+    telefoneLoja?: string | null
     bordaBaloes?: 'ARREDONDADO' | 'MEDIO' | 'RETO'
     sombraBaloes?: boolean
   }>({
@@ -88,24 +113,231 @@ export default function ChatPage({ tenantSlug }: { tenantSlug?: string }) {
     nome: undefined,
     nomeBot: undefined,
     avatarBotUrl: null,
+    telefoneLoja: null,
     bordaBaloes: 'ARREDONDADO',
     sombraBaloes: false
   })
+  const [searchQuery, setSearchQuery] = useState<string>('')
+  const [searchResults, setSearchResults] = useState<Produto[]>([])
+  const [searchLoading, setSearchLoading] = useState<boolean>(false)
+  const [avisoRepetirPedido, setAvisoRepetirPedido] = useState<string | null>(null)
+  const [tipoCompraPorProdutoId, setTipoCompraPorProdutoId] = useState<Record<string, 'unitario' | 'embalagem'>>({})
+  const [quantidadePorProdutoId, setQuantidadePorProdutoId] = useState<Record<string, number>>({})
+  const [valorMinimoPedido, setValorMinimoPedido] = useState<number | null>(null)
 
   const limitSabores = produtoSelecionado?.maxSabores ?? acaiOpcoes?.config?.maxSabores ?? 1
   const limitSorvetes = produtoSelecionado?.maxSorvetes ?? acaiOpcoes?.config?.maxSorvetes ?? 1
   const limitAcompanhamentos = produtoSelecionado?.maxAcompanhamentos ?? acaiOpcoes?.config?.maxAcompanhamentos ?? 3
   const limitCoberturas = produtoSelecionado?.maxCoberturas ?? acaiOpcoes?.config?.maxCoberturas ?? 1
 
-  useEffect(() => {
-    setMensagens([
-      {
-        de: 'bot',
-        texto:
-          'Olá 👋 Seja bem-vindo!\nPara começarmos, informe seu telefone com DDD.'
+  const lastPedidoStatusRef = useRef<string | null>(null)
+  const conviteJogoPedidoIdRef = useRef<string | null>(null)
+  const conviteWhatsAppPedidoIdRef = useRef<string | null>(null)
+  const bootedRef = useRef(false)
+
+  function enviarMensagensBot(textos: string[]) {
+    setMensagens(m => [...m, ...textos.map(texto => ({ de: 'bot' as const, texto }))])
+  }
+
+  function abrirDetalhesPedidoAtual() {
+    if (!pedidoId) return
+    setMeusPedidosAberto(true)
+    mostrarDetalhesPedido(pedidoId)
+  }
+
+  function enviarPedidoParaWhatsApp() {
+    const numero = String(theme.telefoneLoja || '').trim()
+    if (!numero) {
+      setMensagens(m => [...m, { de: 'bot', texto: 'O WhatsApp da loja não está configurado no momento.' }])
+      return
+    }
+    if (!pedidoWhatsApp) return
+    sendOrderToWhatsApp(pedidoWhatsApp, { whatsapp: numero })
+    setMostrarAcoesWhatsApp(false)
+  }
+
+  async function iniciarNovoPedido() {
+    setMostrarAcoesRepetirPedido(false)
+    setUltimoPedido(null)
+    setAvisoRepetirPedido(null)
+    setCarrinho([])
+    setCategoriaSelecionada(null)
+    setProdutoSelecionado(null)
+    setQuantidade(1)
+    setAdicionaisSelecionados({})
+    setMensagens(m => [...m, { de: 'bot', texto: 'Perfeito! Vamos ao cardápio 😊' }])
+    const aberto = await carregarPerfil()
+    if (!aberto) {
+      setMensagens(m => [...m, { de: 'bot', texto: 'Estamos fechados no momento. Volte mais tarde 😊' }])
+      setEstado('finalizado')
+      return
+    }
+    await carregarCategorias()
+    setEstado('escolhendo_categoria')
+  }
+
+  async function repetirPedido() {
+    if (!ultimoPedido || !Array.isArray(ultimoPedido.itens) || ultimoPedido.itens.length === 0) return
+    setMostrarAcoesRepetirPedido(false)
+    setAvisoRepetirPedido(null)
+    setMensagens(m => [...m, { de: 'bot', texto: '🔁 Repetindo seu último pedido...' }])
+    const aberto = await carregarPerfil()
+    if (!aberto) {
+      setMensagens(m => [...m, { de: 'bot', texto: 'Estamos fechados no momento. Volte mais tarde 😊' }])
+      setEstado('finalizado')
+      return
+    }
+    const itensAntigos = ultimoPedido.itens.filter((i: any) => i?.produto?.id)
+    const idsUnicos = Array.from(new Set(itensAntigos.map((i: any) => String(i.produto.id))))
+    let produtosAtivos: any[] = []
+    try {
+      const r = await fetch('/api/produtos?ids=' + idsUnicos.join(','), {
+        headers: headersWith(),
+        cache: 'no-store' as any
+      })
+      if (r.ok) {
+        const d = await r.json()
+        produtosAtivos = Array.isArray(d?.produtos) ? d.produtos.filter((p: any) => p && p.ativo !== false) : []
       }
+    } catch {}
+    const itensCarrinho: ItemCarrinho[] = []
+    const indisponiveis: string[] = []
+    for (const itemAntigo of itensAntigos) {
+      const pid = String(itemAntigo.produto.id)
+      const produtoAtual = produtosAtivos.find(p => String(p.id) === pid)
+      if (!produtoAtual) {
+        indisponiveis.push(String(itemAntigo.produto.nome || 'Item'))
+        continue
+      }
+      const qtdOriginal = Number(itemAntigo.quantidade || 1)
+      const adicionaisAntigos = itemAntigo.adicionais
+      const querEmbalagem = adicionaisAntigos?.tipoCompra === 'embalagem'
+      const temPrecoEmbalagem = produtoAtual.precoEmbalagem != null
+      const tipoCompra: 'unitario' | 'embalagem' = querEmbalagem && temPrecoEmbalagem ? 'embalagem' : 'unitario'
+      const precoUsado = tipoCompra === 'embalagem' ? Number(produtoAtual.precoEmbalagem) : Number(produtoAtual.preco)
+      const subtotal = precoUsado * qtdOriginal
+      const produtoMontado: Produto = {
+        id: String(produtoAtual.id),
+        nome: String(produtoAtual.nome || 'Item'),
+        descricao: produtoAtual.descricao || undefined,
+        preco: Number(produtoAtual.preco || 0),
+        categoria: String(produtoAtual.categoria || ''),
+        adicionais: produtoAtual.adicionais,
+        fotoUrl: produtoAtual.fotoUrl ?? null,
+        maxSabores: produtoAtual.maxSabores ?? null,
+        maxSorvetes: produtoAtual.maxSorvetes ?? null,
+        maxAcompanhamentos: produtoAtual.maxAcompanhamentos ?? null,
+        maxCoberturas: produtoAtual.maxCoberturas ?? null
+      }
+      ;(produtoMontado as any).precoEmbalagem = produtoAtual.precoEmbalagem
+      ;(produtoMontado as any).qtdPorEmbalagem = produtoAtual.qtdPorEmbalagem
+      ;(produtoMontado as any).marca = produtoAtual.marca
+      ;(produtoMontado as any).unidade = produtoAtual.unidade
+      const novosAdicionais: any = { ...(adicionaisAntigos || {}), tipoCompra }
+      itensCarrinho.push({
+        produto: produtoMontado,
+        quantidade: qtdOriginal,
+        adicionais: novosAdicionais
+      })
+    }
+    if (indisponiveis.length > 0) {
+      setAvisoRepetirPedido('⚠️ Alguns produtos não estão mais disponíveis: ' + indisponiveis.join(', '))
+    }
+    setCarrinho(itensCarrinho)
+    setCategoriaSelecionada(null)
+    setProdutoSelecionado(null)
+    setQuantidade(1)
+    setAdicionaisSelecionados({})
+    setMensagens(m => [
+      ...m,
+      { de: 'bot', texto: 'Seu pedido foi carregado no carrinho.' },
+      { de: 'bot', texto: 'Deseja confirmar o pedido ou alterar algo?' }
     ])
-  }, [])
+    setEstado('confirmando_itens')
+  }
+
+  useEffect(() => {
+    if (bootedRef.current) return
+    bootedRef.current = true
+
+    async function boot() {
+      const telefoneCache =
+        typeof window !== 'undefined' ? window.localStorage.getItem('cliente_telefone') : null
+      const tel = String(telefoneCache || '').replace(/\D/g, '')
+      if (tel && /^\d{10,13}$/.test(tel)) {
+        setTelefone(tel)
+        setLoading(true)
+        try {
+          const r = await fetch('/api/clientes?telefone=' + encodeURIComponent(tel), { headers: headersWith() })
+          const ct = r.headers.get('content-type') || ''
+          if (r.ok && ct.includes('application/json')) {
+            const d = await r.json()
+            if (d?.cliente) {
+              setClienteOk(true)
+              setClienteNomeDb(String(d.cliente.nome || ''))
+              const rawEnd = (d.cliente as any).enderecos
+              let lista: any[] = []
+              if (Array.isArray(rawEnd)) lista = rawEnd
+              else if (rawEnd && typeof rawEnd === 'object') lista = [rawEnd]
+              setEnderecosCliente(lista)
+
+              setMensagens(m => [
+                ...m,
+                { de: 'bot', texto: `👋 Olá novamente, ${String(d.cliente.nome || 'cliente')}!` }
+              ])
+
+              const pr = await fetch(
+                '/api/pedidos?telefone=' + encodeURIComponent(tel) + '&ultimo=1',
+                { headers: headersWith() }
+              )
+              const pct = pr.headers.get('content-type') || ''
+              if (pr.ok && pct.includes('application/json')) {
+                const pd = await pr.json()
+                const p = pd?.pedido
+                if (p && Array.isArray(p.itens) && p.itens.length > 0) {
+                  setUltimoPedido(p)
+                  const itensTxt = p.itens
+                    .map((i: any) => `• ${String(i?.produto?.nome || 'Item')}`)
+                    .join('\n')
+                  setMensagens(m => [
+                    ...m,
+                    {
+                      de: 'bot',
+                      texto: `Seu último pedido foi:\n\n${itensTxt}\n\nDeseja repetir o mesmo pedido?`
+                    }
+                  ])
+                  setMostrarAcoesRepetirPedido(true)
+                  setEstado('menu_principal')
+                  return
+                }
+              }
+
+              setMensagens(m => [...m, { de: 'bot', texto: 'Que bom ter você de volta 😊' }])
+              const aberto = await carregarPerfil()
+              if (!aberto) {
+                setMensagens(m => [...m, { de: 'bot', texto: 'Estamos fechados no momento. Volte mais tarde 😊' }])
+                setEstado('finalizado')
+                return
+              }
+              await carregarCategorias()
+              setEstado('escolhendo_categoria')
+              return
+            }
+          }
+        } catch {}
+        setLoading(false)
+      }
+
+      setMensagens([
+        {
+          de: 'bot',
+          texto: 'Olá 👋 Seja bem-vindo!\nPara começarmos, informe seu telefone com DDD.'
+        }
+      ])
+    }
+
+    boot().finally(() => setLoading(false))
+  }, [tenantSlug])
 
   useEffect(() => {
     carregarPerfil()
@@ -124,6 +356,9 @@ export default function ChatPage({ tenantSlug }: { tenantSlug?: string }) {
         setMensagens(m => [...m, { de: 'bot', texto: 'Telefone inválido. Informe somente números com DDD.' }])
         setLoading(false)
         return
+      }
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem('cliente_telefone', telefone)
       }
       const r = await fetch('/api/clientes?telefone=' + encodeURIComponent(telefone), { headers: headersWith() })
       if (!r.ok) {
@@ -184,6 +419,9 @@ export default function ChatPage({ tenantSlug }: { tenantSlug?: string }) {
       headers: headersWith({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ nome: `${nome.trim()} ${sobrenome.trim()}`, telefone })
     })
+    if (typeof window !== 'undefined' && telefone) {
+      window.localStorage.setItem('cliente_telefone', telefone)
+    }
     setClienteNomeDb(`${nome.trim()} ${sobrenome.trim()}`)
     setClienteOk(true)
     setMensagens(m => [...m, { de: 'bot', texto: `Cadastro realizado.\nVamos fazer seu pedido, ${nome} ${sobrenome}.` }])
@@ -251,7 +489,7 @@ export default function ChatPage({ tenantSlug }: { tenantSlug?: string }) {
       if (r.ok) {
         const d = await r.json()
         const t = d?.estabelecimento
-        const pf = t?.perfil || 'LANCHONETE'
+        const pf = safePerfil(t?.perfil) || 'LANCHONETE'
         setPerfil(pf)
         setTheme({
           corPrimaria: t?.corPrimaria || '#22c55e',
@@ -262,9 +500,12 @@ export default function ChatPage({ tenantSlug }: { tenantSlug?: string }) {
           nome: t?.nome || undefined,
           nomeBot: t?.nomeBot || 'Atendimento',
           avatarBotUrl: t?.avatarBotUrl || null,
+          telefoneLoja: t?.telefone || null,
           bordaBaloes: t?.bordaBaloes || 'ARREDONDADO',
           sombraBaloes: t?.sombraBaloes ?? false
         })
+        const minRaw = Number(t?.valorMinimoPedido)
+        setValorMinimoPedido(isNaN(minRaw) || minRaw <= 0 ? null : minRaw)
         if (t && t.aberto === false) {
           return false
         }
@@ -399,7 +640,7 @@ export default function ChatPage({ tenantSlug }: { tenantSlug?: string }) {
       aberto: '⏳ Aguardando pagamento',
       aguardando_pix: '⏳ Aguardando pagamento',
       pago: '✅ Aprovado',
-      preparando: '👨‍🍳 Em preparação',
+      preparando: perfil === 'DISTRIBUIDORA' ? '📦 Separando seu pedido' : '👨‍🍳 Em preparação',
       saiu_para_entrega: '🚚 Saiu para entrega',
       entregue: '📦 Entregue',
       cancelado: '❌ Cancelado'
@@ -451,11 +692,41 @@ export default function ChatPage({ tenantSlug }: { tenantSlug?: string }) {
 
   function adicionarItem() {
     if (!produtoSelecionado || quantidade < 1) return
-    const adicionais = perfil === 'ACAITERIA' || perfil === 'PIZZARIA' ? adicionaisSelecionados : undefined
+    let adicionais: any = perfil === 'ACAITERIA' || perfil === 'PIZZARIA' ? adicionaisSelecionados : undefined
+    if (perfil === 'DISTRIBUIDORA') {
+      const tp = tipoCompraPorProdutoId[produtoSelecionado.id] || 'unitario'
+      if (adicionais && typeof adicionais === 'object' && !Array.isArray(adicionais)) {
+        adicionais.tipoCompra = tp
+      } else {
+        adicionais = { tipoCompra: tp }
+      }
+    }
     setCarrinho(c => [...c, { produto: produtoSelecionado, quantidade, adicionais }])
     setProdutoSelecionado(null)
     setQuantidade(1)
     setAdicionaisSelecionados({})
+    setEstado('confirmando_itens')
+  }
+
+  function adicionarItemInline(p: Produto, tipoCompra: 'unitario' | 'embalagem', quantidade: number) {
+    if (!p || !p.id) return
+    const qtd = Math.max(1, Math.floor(Number(quantidade) || 1) || 1)
+    setQuantidadePorProdutoId(m => ({ ...m, [p.id]: qtd }))
+    const precoUnit = Number(p.preco || 0)
+    const precoEmb = (p as any).precoEmbalagem != null ? Number((p as any).precoEmbalagem) : null
+    const temEmb = precoEmb != null
+    const finalTipo = temEmb ? tipoCompra : 'unitario'
+    const precoUsado = finalTipo === 'embalagem' ? precoEmb! : precoUnit
+    const subtotal = precoUsado * qtd
+    setCarrinho(c => [...c, { produto: p, quantidade: qtd, adicionais: { tipoCompra: finalTipo } }])
+    const labelTipo = finalTipo === 'embalagem' ? ' (Embalagem)' : ''
+    const un = (p as any).unidade || 'un'
+    const nome = String(p.nome || 'Item')
+    const subtotalFmt = subtotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+    setMensagens(m => [
+      ...m,
+      { de: 'bot', texto: `✅ Adicionado: **${nome}${labelTipo}** x ${qtd}${un} · Subtotal **${subtotalFmt}**` }
+    ])
     setEstado('confirmando_itens')
   }
 
@@ -515,9 +786,21 @@ export default function ChatPage({ tenantSlug }: { tenantSlug?: string }) {
         let msg = 'Não foi possível finalizar seu pedido. Tente novamente.'
         try {
           const err = await r.json()
-          if (err?.error) msg = 'Erro ao finalizar pedido: ' + err.error
+          if (err?.error) {
+            const raw = String(err.error)
+            if (/valor.*m[ií]nimo|m[ií]nimo.*pedido/i.test(raw)) {
+              msg = '⚠️ ' + raw + '\n\nAdicione mais itens no carrinho para atingir o valor mínimo.'
+            } else if (/dados.*inv[aá]lidos|inv[aá]lidos/i.test(raw)) {
+              msg = '⚠️ Alguns dados do pedido estão incompletos. Tente novamente.'
+            } else if (/produto.*inv[aá]lido|cliente.*n[aã]o.*encontrado/i.test(raw)) {
+              msg = '⚠️ ' + raw + '. Recarregue a página e tente novamente.'
+            } else {
+              msg = '⚠️ ' + raw
+            }
+          }
         } catch {}
         setMensagens(m => [...m, { de: 'bot', texto: msg }])
+        setEstado('confirmando_itens')
         return
       }
       const ct = r.headers.get('content-type') || ''
@@ -546,6 +829,8 @@ export default function ChatPage({ tenantSlug }: { tenantSlug?: string }) {
           const pixData = await rp.json()
           setPix(pixData)
         }
+        setMostrarAcoesPedido(false)
+        setMostrarAcoesWhatsApp(false)
       } else {
         const total = Number(d?.pedido?.total || resumoTotal?.total || 0)
         const entregaTxt = formaEntrega === 'entrega' ? 'Entrega' : 'Retirada no balcão'
@@ -562,12 +847,122 @@ export default function ChatPage({ tenantSlug }: { tenantSlug?: string }) {
               )}\n${entregaTxt} selecionada.\n${pagamentoTxt}`
             : `Pedido ${d.pedido.id} registrado!\n${entregaTxt} selecionada.\n${pagamentoTxt}`
         setMensagens(m => [...m, { de: 'bot', texto: msg }])
+        const nomeCliente = (clienteNomeDb || `${nome} ${sobrenome}`.trim() || 'Cliente').trim()
+        setPedidoWhatsApp({
+          codigo: pedidoCodigoCurto(d.pedido.id),
+          cliente_nome: nomeCliente,
+          cliente_telefone: telefone,
+          total,
+          items: carrinho.map(i => ({ quantidade: i.quantidade, nome: i.produto.nome }))
+        })
+        enviarMensagensBot([
+          '🎉 Pedido confirmado!\n\nSeu pedido foi registrado com sucesso.',
+          'Deseja enviar o pedido para o WhatsApp da loja\npara agilizar o preparo? 📲',
+          '⏱ Tempo estimado de preparo: 15–25 minutos.',
+          'Enquanto seu pedido fica pronto,\nque tal jogar um pouco? 🎮'
+        ])
+        conviteWhatsAppPedidoIdRef.current = d.pedido.id
+        conviteJogoPedidoIdRef.current = d.pedido.id
+        lastPedidoStatusRef.current = 'preparando'
+        setMostrarAcoesPedido(true)
+        setMostrarAcoesWhatsApp(true)
       }
       setEstado('finalizado')
     } finally {
       setLoading(false)
     }
   }
+
+  useEffect(() => {
+    if (!pedidoId) return
+    let alive = true
+    lastPedidoStatusRef.current = null
+
+    async function tick() {
+      try {
+        const r = await fetch(`/api/pedidos/${pedidoId}`, { headers: headersWith() })
+        const ct = r.headers.get('content-type') || ''
+        if (!r.ok || !ct.includes('application/json')) return
+        const d = await r.json()
+        const status = String(d?.pedido?.status || '')
+        if (!status) return
+        if (!alive) return
+
+        const prev = lastPedidoStatusRef.current
+        lastPedidoStatusRef.current = status
+
+        if (pedidoDetalhe?.id === pedidoId) {
+          setPedidoDetalhe((cur: any) => (cur?.id === pedidoId ? d.pedido : cur))
+        }
+
+        if (!prev) {
+          if (status === 'pago' && (conviteJogoPedidoIdRef.current !== pedidoId || conviteWhatsAppPedidoIdRef.current !== pedidoId)) {
+            const p = d?.pedido
+            if (p) {
+              const itens = Array.isArray(p.itens) ? p.itens : []
+              setPedidoWhatsApp({
+                codigo: pedidoCodigoCurto(pedidoId!),
+                cliente_nome: String(p?.cliente?.nome || clienteNomeDb || `${nome} ${sobrenome}`.trim() || 'Cliente').trim(),
+                cliente_telefone: String(p?.cliente?.telefone || telefone || '').trim(),
+                total: Number(p?.total || 0),
+                items: itens.map((i: any) => ({ quantidade: Number(i.quantidade || 0), nome: String(i?.produto?.nome || 'Item') }))
+              })
+            }
+            enviarMensagensBot([
+              '🎉 Pedido confirmado!\n\nSeu pedido foi registrado com sucesso.',
+              'Deseja enviar o pedido para o WhatsApp da loja\npara agilizar o preparo? 📲',
+              '⏱ Tempo estimado de preparo: 15–25 minutos.',
+              'Enquanto seu pedido fica pronto,\nque tal jogar um pouco? 🎮'
+            ])
+            conviteWhatsAppPedidoIdRef.current = pedidoId
+            conviteJogoPedidoIdRef.current = pedidoId
+            setMostrarAcoesPedido(true)
+            setMostrarAcoesWhatsApp(true)
+          }
+          return
+        }
+
+        if (status !== prev) {
+          if (status === 'pago' && (conviteJogoPedidoIdRef.current !== pedidoId || conviteWhatsAppPedidoIdRef.current !== pedidoId)) {
+            const p = d?.pedido
+            if (p) {
+              const itens = Array.isArray(p.itens) ? p.itens : []
+              setPedidoWhatsApp({
+                codigo: pedidoCodigoCurto(pedidoId!),
+                cliente_nome: String(p?.cliente?.nome || clienteNomeDb || `${nome} ${sobrenome}`.trim() || 'Cliente').trim(),
+                cliente_telefone: String(p?.cliente?.telefone || telefone || '').trim(),
+                total: Number(p?.total || 0),
+                items: itens.map((i: any) => ({ quantidade: Number(i.quantidade || 0), nome: String(i?.produto?.nome || 'Item') }))
+              })
+            }
+            enviarMensagensBot([
+              '🎉 Pedido confirmado!\n\nSeu pedido foi registrado com sucesso.',
+              'Deseja enviar o pedido para o WhatsApp da loja\npara agilizar o preparo? 📲',
+              '⏱ Tempo estimado de preparo: 15–25 minutos.',
+              'Enquanto seu pedido fica pronto,\nque tal jogar um pouco? 🎮'
+            ])
+            conviteWhatsAppPedidoIdRef.current = pedidoId
+            conviteJogoPedidoIdRef.current = pedidoId
+            setMostrarAcoesPedido(true)
+            setMostrarAcoesWhatsApp(true)
+          }
+          if (status === 'preparando') {
+            setMensagens(m => [...m, { de: 'bot', texto: '👨‍🍳 Seu pedido já está sendo preparado!' }])
+          }
+          if (status === 'saiu_para_entrega') {
+            setMensagens(m => [...m, { de: 'bot', texto: '🛵 Seu pedido saiu para entrega!\nEstá quase chegando 😄' }])
+          }
+        }
+      } catch {}
+    }
+
+    tick()
+    const id = window.setInterval(tick, 10_000)
+    return () => {
+      alive = false
+      window.clearInterval(id)
+    }
+  }, [pedidoId, tenantSlug, pedidoDetalhe?.id])
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -612,6 +1007,22 @@ export default function ChatPage({ tenantSlug }: { tenantSlug?: string }) {
     }
     ensureAcaiOpcoes()
   }, [perfil, estado, acaiOpcoes, tenantSlug])
+
+  useEffect(() => {
+    if (!(searchQuery.length >= 2) || estado !== 'pesquisando_produto') {
+      if (searchResults.length > 0) setSearchResults([])
+      return
+    }
+    const id = window.setTimeout(() => {
+      setSearchLoading(true)
+      fetch('/api/produtos/search?q=' + encodeURIComponent(searchQuery) + '&limit=20', { headers: headersWith() })
+        .then(r => r.json())
+        .then(d => setSearchResults(d.produtos || []))
+        .catch(() => setSearchResults([]))
+        .finally(() => setSearchLoading(false))
+    }, 300)
+    return () => window.clearTimeout(id)
+  }, [searchQuery, estado, tenantSlug])
 
   const pedidosEmAberto = meusPedidos.filter(p => p.status !== 'entregue' && p.status !== 'cancelado').length
 
@@ -680,6 +1091,68 @@ export default function ChatPage({ tenantSlug }: { tenantSlug?: string }) {
               </div>
             )
           })}
+          {mostrarAcoesRepetirPedido && (
+            <div className="chat-actions flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                className="px-3 py-2 rounded-full text-xs font-semibold text-white shadow-sm disabled:opacity-50"
+                style={{ backgroundColor: theme.corPrimaria }}
+                onClick={repetirPedido}
+                disabled={!ultimoPedido}
+              >
+                🔁 Repetir pedido
+              </button>
+              <button
+                type="button"
+                className="px-3 py-2 rounded-full text-xs font-semibold border border-gray-300 bg-white"
+                onClick={iniciarNovoPedido}
+              >
+                🍔 Fazer novo pedido
+              </button>
+            </div>
+          )}
+          {mostrarAcoesWhatsApp && (
+            <div className="chat-actions flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                className="btn-whatsapp px-3 py-2 rounded-full text-xs font-semibold text-white shadow-sm disabled:opacity-50"
+                style={{ backgroundColor: '#25D366' }}
+                onClick={enviarPedidoParaWhatsApp}
+                disabled={!pedidoWhatsApp || !String(theme.telefoneLoja || '').trim()}
+              >
+                📲 Enviar no WhatsApp
+              </button>
+              <button
+                type="button"
+                className="btn-secondary px-3 py-2 rounded-full text-xs font-semibold border border-gray-300 bg-white"
+                onClick={() => {
+                  setMostrarAcoesWhatsApp(false)
+                  abrirDetalhesPedidoAtual()
+                }}
+              >
+                📦 Apenas acompanhar pedido
+              </button>
+            </div>
+          )}
+          {mostrarAcoesPedido && (
+            <div className="chat-actions flex items-center gap-2">
+              <button
+                type="button"
+                className="btn-arcade px-3 py-2 rounded-full text-xs font-semibold text-white shadow-sm"
+                style={{ backgroundColor: theme.corPrimaria }}
+                onClick={() => setMostrarArcade(true)}
+              >
+                🎮 Jogar agora
+              </button>
+              <button
+                type="button"
+                className="btn-status px-3 py-2 rounded-full text-xs font-semibold border border-gray-300 bg-white"
+                onClick={abrirDetalhesPedidoAtual}
+              >
+                📦 Ver status do pedido
+              </button>
+            </div>
+          )}
           {estado === 'menu_principal' && (
             <div className="flex">
               <div className="max-w-[85%] rounded-2xl rounded-tl-sm bg-gray-100 text-gray-900 px-3 py-2">
@@ -692,6 +1165,31 @@ export default function ChatPage({ tenantSlug }: { tenantSlug?: string }) {
             <div className="flex">
               <div className="max-w-[85%] rounded-2xl rounded-tl-sm bg-gray-100 text-gray-900 px-3 py-2">
                 O que você deseja pedir?
+                {perfil === 'DISTRIBUIDORA' && (
+                  <div className="mt-3 border border-gray-200 rounded-xl bg-white p-3">
+                    <div className="text-sm font-semibold">🔎 Busca rápida</div>
+                    <div className="text-xs text-gray-600 mt-0.5">Encontre produtos por nome, marca ou categoria</div>
+                    <div className="mt-2">
+                      <input
+                        type="text"
+                        value={searchQuery}
+                        onChange={e => setSearchQuery(e.target.value)}
+                        placeholder="Digite o nome do produto... (ex: heineken)"
+                        className="w-full border rounded-lg px-3 py-2 text-sm"
+                      />
+                    </div>
+                    {estado !== 'pesquisando_produto' && (
+                      <button
+                        type="button"
+                        onClick={() => setEstado('pesquisando_produto')}
+                        className="mt-2 w-full px-3 py-2 rounded-lg text-sm font-semibold text-white"
+                        style={{ backgroundColor: theme.corPrimaria }}
+                      >
+                        Abrir busca completa
+                      </button>
+                    )}
+                  </div>
+                )}
                 <div className="mt-2 flex gap-2 flex-wrap">
                   {categorias.map(cat => (
                     <button
@@ -703,6 +1201,145 @@ export default function ChatPage({ tenantSlug }: { tenantSlug?: string }) {
                     </button>
                   ))}
                 </div>
+              </div>
+            </div>
+          )}
+          {estado === 'pesquisando_produto' && perfil === 'DISTRIBUIDORA' && (
+            <div className="flex">
+              <div className="max-w-[85%] rounded-2xl rounded-tl-sm bg-gray-100 text-gray-900 px-3 py-2 w-full">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <div className="font-medium">🔎 Resultados da busca</div>
+                    <div className="text-xs text-gray-600 mt-0.5">
+                      {searchLoading ? 'Buscando...' : `${searchResults.length} produto(s) encontrado(s)`}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setEstado('escolhendo_categoria')}
+                    className="px-3 py-1 rounded-full text-xs border border-gray-300 bg-white"
+                  >
+                    Voltar
+                  </button>
+                </div>
+                <div className="mt-2">
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    placeholder="Digite o nome do produto... (ex: heineken)"
+                    className="w-full border rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+                {searchLoading && (
+                  <div className="mt-3 text-xs text-gray-600">Pesquisando...</div>
+                )}
+                {!searchLoading && searchResults.length === 0 && searchQuery.length >= 2 && (
+                  <div className="mt-3 text-xs text-gray-600">Nenhum produto encontrado. Tente outro termo.</div>
+                )}
+                {!searchLoading && searchResults.length > 0 && (
+                  <div className="mt-3 space-y-2">
+                    {searchResults.map(p => {
+                      const tipoCompra: 'unitario' | 'embalagem' = tipoCompraPorProdutoId[p.id] || 'unitario'
+                      const precoUnitario = Number(p.preco)
+                      const precoEmbalagem = (p as any).precoEmbalagem != null ? Number((p as any).precoEmbalagem) : null
+                      const temEmbalagem = precoEmbalagem != null
+                      const marca = (p as any).marca || p.categoria
+                      const unidade = (p as any).unidade || 'un'
+                      const qtdPorEmbalagem = (p as any).qtdPorEmbalagem
+                      const quantidadeCard = Number(quantidadePorProdutoId[p.id] ?? 1)
+                      const subtotalCard =
+                        (tipoCompra === 'embalagem' && temEmbalagem ? precoEmbalagem! : precoUnitario) *
+                        Math.max(1, Math.floor(quantidadeCard) || 1)
+                      return (
+                        <div key={p.id} className="flex gap-3 rounded-xl bg-white border border-gray-200 p-2">
+                          {p.fotoUrl ? (
+                            <div className="w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 bg-gray-100">
+                              <img src={p.fotoUrl} alt={p.nome} className="w-full h-full object-cover" />
+                            </div>
+                          ) : (
+                            <div className="w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 bg-gray-100 flex items-center justify-center text-lg">
+                              📦
+                            </div>
+                          )}
+                          <div className="flex-1 flex flex-col min-w-0">
+                            <div className="text-sm font-semibold truncate">{p.nome}</div>
+                            <div className="text-xs text-gray-500 truncate">{marca}</div>
+                            <div className="text-xs text-gray-500">
+                              {unidade}{qtdPorEmbalagem ? ` · Embalagem c/ ${qtdPorEmbalagem}` : ''}
+                            </div>
+                            {temEmbalagem ? (
+                              <div className="mt-1 flex items-center gap-2 flex-wrap">
+                                <span className="text-sm font-semibold text-gray-900">R$ {precoUnitario.toFixed(2)}</span>
+                                <div className="flex items-center gap-1 text-xs bg-gray-200 rounded-full p-0.5">
+                                  <label className={`flex items-center gap-1 px-2 py-0.5 rounded-full cursor-pointer ${tipoCompra === 'unitario' ? 'bg-white shadow-sm' : ''}`}>
+                                    <input
+                                      type="radio"
+                                      name={`tipo-${p.id}`}
+                                      checked={tipoCompra === 'unitario'}
+                                      onChange={() => setTipoCompraPorProdutoId(m => ({ ...m, [p.id]: 'unitario' }))}
+                                      className="w-3 h-3"
+                                    />
+                                    <span>Unitário</span>
+                                  </label>
+                                  <label className={`flex items-center gap-1 px-2 py-0.5 rounded-full cursor-pointer ${tipoCompra === 'embalagem' ? 'bg-white shadow-sm' : ''}`}>
+                                    <input
+                                      type="radio"
+                                      name={`tipo-${p.id}`}
+                                      checked={tipoCompra === 'embalagem'}
+                                      onChange={() => setTipoCompraPorProdutoId(m => ({ ...m, [p.id]: 'embalagem' }))}
+                                      className="w-3 h-3"
+                                    />
+                                    <span>Embalagem</span>
+                                  </label>
+                                </div>
+                                <span className="text-sm font-semibold text-gray-900">R$ {precoEmbalagem!.toFixed(2)}</span>
+                              </div>
+                            ) : (
+                              <div className="mt-1 text-sm font-semibold text-gray-900">R$ {precoUnitario.toFixed(2)}</div>
+                            )}
+                            <div className="mt-2 flex items-center gap-2 flex-wrap">
+                              <div className="flex items-center gap-1 border border-gray-200 rounded-lg px-2 py-1 bg-gray-50">
+                                <label htmlFor={`q-card-search-${p.id}`} className="text-xs text-gray-500">
+                                  Quant.
+                                </label>
+                                <input
+                                  id={`q-card-search-${p.id}`}
+                                  type="number"
+                                  min={1}
+                                  step={1}
+                                  value={quantidadeCard}
+                                  onChange={e =>
+                                    setQuantidadePorProdutoId(m => ({
+                                      ...m,
+                                      [p.id]: Math.max(1, Math.floor(Number(e.target.value) || 1))
+                                    }))
+                                  }
+                                  className="w-16 border-0 bg-transparent text-sm font-semibold text-gray-900 outline-none p-0 text-center"
+                                />
+                                <span className="text-xs text-gray-500">{unidade}</span>
+                              </div>
+                              <div className="text-xs text-gray-500">
+                                Subtotal:{' '}
+                                <span className="font-semibold text-gray-900">
+                                  R$ {subtotalCard.toFixed(2).replace('.', ',')}
+                                </span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => adicionarItemInline(p, tipoCompra, quantidadeCard)}
+                                className="px-3 py-1 rounded-full text-xs font-medium text-white ml-auto"
+                                style={{ backgroundColor: theme.corPrimaria }}
+                              >
+                                + Adicionar
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -756,8 +1393,122 @@ export default function ChatPage({ tenantSlug }: { tenantSlug?: string }) {
           )}
           {estado === 'escolhendo_produto' && (
             <div className="flex">
-              <div className="max-w-[85%] rounded-2xl rounded-tl-sm bg-gray-100 text-gray-900 px-3 py-2">
-                {perfil === 'ACAITERIA' ? (
+              <div className="max-w-[85%] rounded-2xl rounded-tl-sm bg-gray-100 text-gray-900 px-3 py-2 w-full">
+                {perfil === 'DISTRIBUIDORA' ? (
+                  <>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="font-medium">Produtos em {categoriaSelecionada || 'categoria'}</div>
+                      <button
+                        type="button"
+                        onClick={() => setEstado('escolhendo_categoria')}
+                        className="px-3 py-1 rounded-full text-xs border border-gray-300 bg-white"
+                      >
+                        Voltar
+                      </button>
+                    </div>
+                    <div className="mt-3 space-y-2">
+                      {produtos.map(p => {
+                        const tipoCompra: 'unitario' | 'embalagem' = tipoCompraPorProdutoId[p.id] || 'unitario'
+                        const precoUnitario = Number(p.preco)
+                        const precoEmbalagem = (p as any).precoEmbalagem != null ? Number((p as any).precoEmbalagem) : null
+                        const temEmbalagem = precoEmbalagem != null
+                        const marca = (p as any).marca || p.categoria
+                        const unidade = (p as any).unidade || 'un'
+                        const qtdPorEmbalagem = (p as any).qtdPorEmbalagem
+                        const quantidadeCard = Number(quantidadePorProdutoId[p.id] ?? 1)
+                        const subtotalCard =
+                          (tipoCompra === 'embalagem' && temEmbalagem ? precoEmbalagem! : precoUnitario) *
+                          Math.max(1, Math.floor(quantidadeCard) || 1)
+                        return (
+                          <div key={p.id} className="flex gap-3 rounded-xl bg-white border border-gray-200 p-2">
+                            {p.fotoUrl ? (
+                              <div className="w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 bg-gray-100">
+                                <img src={p.fotoUrl} alt={p.nome} className="w-full h-full object-cover" />
+                              </div>
+                            ) : (
+                              <div className="w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 bg-gray-100 flex items-center justify-center text-lg">
+                                📦
+                              </div>
+                            )}
+                            <div className="flex-1 flex flex-col min-w-0">
+                              <div className="text-sm font-semibold truncate">{p.nome}</div>
+                              <div className="text-xs text-gray-500 truncate">{marca}</div>
+                              <div className="text-xs text-gray-500">
+                                {unidade}{qtdPorEmbalagem ? ` · Embalagem c/ ${qtdPorEmbalagem}` : ''}
+                              </div>
+                              {temEmbalagem ? (
+                                <div className="mt-1 flex items-center gap-2 flex-wrap">
+                                  <span className="text-sm font-semibold text-gray-900">R$ {precoUnitario.toFixed(2)}</span>
+                                  <div className="flex items-center gap-1 text-xs bg-gray-200 rounded-full p-0.5">
+                                    <label className={`flex items-center gap-1 px-2 py-0.5 rounded-full cursor-pointer ${tipoCompra === 'unitario' ? 'bg-white shadow-sm' : ''}`}>
+                                      <input
+                                        type="radio"
+                                        name={`tipo2-${p.id}`}
+                                        checked={tipoCompra === 'unitario'}
+                                        onChange={() => setTipoCompraPorProdutoId(m => ({ ...m, [p.id]: 'unitario' }))}
+                                        className="w-3 h-3"
+                                      />
+                                      <span>Unitário</span>
+                                    </label>
+                                    <label className={`flex items-center gap-1 px-2 py-0.5 rounded-full cursor-pointer ${tipoCompra === 'embalagem' ? 'bg-white shadow-sm' : ''}`}>
+                                      <input
+                                        type="radio"
+                                        name={`tipo2-${p.id}`}
+                                        checked={tipoCompra === 'embalagem'}
+                                        onChange={() => setTipoCompraPorProdutoId(m => ({ ...m, [p.id]: 'embalagem' }))}
+                                        className="w-3 h-3"
+                                      />
+                                      <span>Embalagem</span>
+                                    </label>
+                                  </div>
+                                  <span className="text-sm font-semibold text-gray-900">R$ {precoEmbalagem!.toFixed(2)}</span>
+                                </div>
+                              ) : (
+                                <div className="mt-1 text-sm font-semibold text-gray-900">R$ {precoUnitario.toFixed(2)}</div>
+                              )}
+                              <div className="mt-2 flex items-center gap-2 flex-wrap">
+                                <div className="flex items-center gap-1 border border-gray-200 rounded-lg px-2 py-1 bg-gray-50">
+                                  <label htmlFor={`q-card-cat-${p.id}`} className="text-xs text-gray-500">
+                                    Quant.
+                                  </label>
+                                  <input
+                                    id={`q-card-cat-${p.id}`}
+                                    type="number"
+                                    min={1}
+                                    step={1}
+                                    value={quantidadeCard}
+                                    onChange={e =>
+                                      setQuantidadePorProdutoId(m => ({
+                                        ...m,
+                                        [p.id]: Math.max(1, Math.floor(Number(e.target.value) || 1))
+                                      }))
+                                    }
+                                    className="w-16 border-0 bg-transparent text-sm font-semibold text-gray-900 outline-none p-0 text-center"
+                                  />
+                                  <span className="text-xs text-gray-500">{unidade}</span>
+                                </div>
+                                <div className="text-xs text-gray-500">
+                                  Subtotal:{' '}
+                                  <span className="font-semibold text-gray-900">
+                                    R$ {subtotalCard.toFixed(2).replace('.', ',')}
+                                  </span>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => adicionarItemInline(p, tipoCompra, quantidadeCard)}
+                                  className="px-3 py-1 rounded-full text-xs font-medium text-white ml-auto"
+                                  style={{ backgroundColor: theme.corPrimaria }}
+                                >
+                                  + Adicionar
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </>
+                ) : perfil === 'ACAITERIA' ? (
                   <>
                     <div>Qual tamanho de açaí você deseja?</div>
                     <div className="mt-2 -mx-3 overflow-x-auto">
@@ -831,103 +1582,284 @@ export default function ChatPage({ tenantSlug }: { tenantSlug?: string }) {
           )}
           {estado === 'escolhendo_quantidade' && produtoSelecionado && perfil !== 'ACAITERIA' && (
             <div className="flex">
-              <div className="max-w-[85%] rounded-2xl rounded-tl-sm bg-gray-100 text-gray-900 px-3 py-2">
-                Quantas unidades você deseja?
-                <div className="mt-2 flex items-center gap-2">
-                  <input
-                    type="number"
-                    min={1}
-                    value={quantidade}
-                    onChange={e => setQuantidade(Math.max(1, Number(e.target.value)))}
-                    className="w-24 border rounded-lg px-2 py-1"
-                  />
-                  <button
-                    onClick={() => {
-                      const precisaAdicionais = perfil !== 'LANCHONETE'
-                      setEstado(precisaAdicionais ? 'escolhendo_adicionais' : 'confirmando_itens')
-                      if (!precisaAdicionais) adicionarItem()
-                    }}
-                    className="px-3 py-1 rounded-lg"
-                    style={{ backgroundColor: theme.corPrimaria, color: '#fff' }}
-                  >
-                    Continuar
-                  </button>
-                </div>
+              <div className="max-w-[85%] rounded-2xl rounded-tl-sm bg-gray-100 text-gray-900 px-3 py-2 w-full">
+                {perfil === 'DISTRIBUIDORA' ? (
+                  <>
+                    <div className="font-medium text-sm">
+                      {produtoSelecionado.nome}
+                    </div>
+                    {(produtoSelecionado as any).marca ? (
+                      <div className="text-xs text-gray-500">{(produtoSelecionado as any).marca}</div>
+                    ) : null}
+                    <div className="mt-2 text-sm">Escolha o tipo de compra e informe a quantidade desejada:</div>
+                    <div className="mt-2">
+                      {(() => {
+                        const precoUnitario = Number(produtoSelecionado.preco)
+                        const precoEmbalagem =
+                          (produtoSelecionado as any).precoEmbalagem != null
+                            ? Number((produtoSelecionado as any).precoEmbalagem)
+                            : null
+                        const temEmbalagem = precoEmbalagem != null
+                        const unidade = (produtoSelecionado as any).unidade || 'un'
+                        const qtdPorEmbalagem = (produtoSelecionado as any).qtdPorEmbalagem
+                        const tipoCompra: 'unitario' | 'embalagem' =
+                          tipoCompraPorProdutoId[produtoSelecionado.id] || 'unitario'
+                        const precoUsado = tipoCompra === 'embalagem' && temEmbalagem ? precoEmbalagem! : precoUnitario
+                        const subtotal = precoUsado * Math.max(1, Math.floor(quantidade) || 1)
+                        return (
+                          <>
+                            {temEmbalagem ? (
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-sm font-semibold text-gray-900">R$ {precoUnitario.toFixed(2)}</span>
+                                <div className="flex items-center gap-1 text-xs bg-gray-200 rounded-full p-0.5">
+                                  <label
+                                    className={`flex items-center gap-1 px-2 py-0.5 rounded-full cursor-pointer ${tipoCompra === 'unitario' ? 'bg-white shadow-sm' : ''}`}
+                                  >
+                                    <input
+                                      type="radio"
+                                      name="tipo-qtd"
+                                      checked={tipoCompra === 'unitario'}
+                                      onChange={() =>
+                                        setTipoCompraPorProdutoId(m => ({
+                                          ...m,
+                                          [produtoSelecionado.id]: 'unitario'
+                                        }))
+                                      }
+                                      className="w-3 h-3"
+                                    />
+                                    <span>Unitário</span>
+                                  </label>
+                                  <label
+                                    className={`flex items-center gap-1 px-2 py-0.5 rounded-full cursor-pointer ${tipoCompra === 'embalagem' ? 'bg-white shadow-sm' : ''}`}
+                                  >
+                                    <input
+                                      type="radio"
+                                      name="tipo-qtd"
+                                      checked={tipoCompra === 'embalagem'}
+                                      onChange={() =>
+                                        setTipoCompraPorProdutoId(m => ({
+                                          ...m,
+                                          [produtoSelecionado.id]: 'embalagem'
+                                        }))
+                                      }
+                                      className="w-3 h-3"
+                                    />
+                                    <span>Embalagem</span>
+                                  </label>
+                                </div>
+                                <span className="text-sm font-semibold text-gray-900">R$ {precoEmbalagem!.toFixed(2)}</span>
+                                {qtdPorEmbalagem ? (
+                                  <span className="text-xs text-gray-500">(emb. c/ {qtdPorEmbalagem} {unidade})</span>
+                                ) : null}
+                              </div>
+                            ) : (
+                              <div className="text-sm font-semibold text-gray-900">R$ {precoUnitario.toFixed(2)} / {unidade}</div>
+                            )}
+                            <div className="mt-3 flex items-center gap-2 flex-wrap">
+                              <label className="text-xs text-gray-600" htmlFor="qtd-dist-qty">
+                                Quantidade ({tipoCompra === 'embalagem' ? 'embalagens' : unidade}):
+                              </label>
+                              <input
+                                id="qtd-dist-qty"
+                                type="number"
+                                min={1}
+                                step={1}
+                                value={quantidade}
+                                onChange={e => setQuantidade(Math.max(1, Math.floor(Number(e.target.value) || 1)))}
+                                className="w-24 border rounded-lg px-2 py-1"
+                              />
+                              <div className="text-xs text-gray-500 ml-auto">
+                                Subtotal:{' '}
+                                <span className="font-semibold text-gray-900">
+                                  R$ {subtotal.toFixed(2).replace('.', ',')}
+                                </span>
+                              </div>
+                            </div>
+                          </>
+                        )
+                      })()}
+                    </div>
+                    <div className="mt-3 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEstado('escolhendo_produto')
+                          setProdutoSelecionado(null)
+                        }}
+                        className="px-3 py-1 rounded-full border text-xs bg-white"
+                      >
+                        Voltar
+                      </button>
+                      <button
+                        onClick={adicionarItem}
+                        className="px-3 py-1 rounded-lg ml-auto"
+                        style={{ backgroundColor: theme.corPrimaria, color: '#fff' }}
+                      >
+                        Adicionar ao pedido
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    Quantas unidades você deseja?
+                    <div className="mt-2 flex items-center gap-2">
+                      <input
+                        type="number"
+                        min={1}
+                        value={quantidade}
+                        onChange={e => setQuantidade(Math.max(1, Number(e.target.value)))}
+                        className="w-24 border rounded-lg px-2 py-1"
+                      />
+                      <button
+                        onClick={() => {
+                          const precisaAdicionais = perfil !== 'LANCHONETE'
+                          setEstado(precisaAdicionais ? 'escolhendo_adicionais' : 'confirmando_itens')
+                          if (!precisaAdicionais) adicionarItem()
+                        }}
+                        className="px-3 py-1 rounded-lg"
+                        style={{ backgroundColor: theme.corPrimaria, color: '#fff' }}
+                      >
+                        Continuar
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           )}
           {estado === 'confirmando_itens' && (
             <div className="flex">
               <div className="max-w-[85%] rounded-2xl rounded-tl-sm bg-gray-100 text-gray-900 px-3 py-2">
+                {avisoRepetirPedido && (
+                  <div className="mb-2 p-2 rounded-lg bg-yellow-50 border border-yellow-200 text-xs text-yellow-800 whitespace-pre-wrap">
+                    {avisoRepetirPedido}
+                  </div>
+                )}
                 Itens selecionados:
                 <ul className="mt-2 space-y-1">
-                  {carrinho.map((i, idx) => (
-                    <li key={idx} className="text-sm">
-                      <div className="font-medium">
-                        {i.produto.nome} x {i.quantidade}
+                  {carrinho.map((i, idx) => {
+                    const tp = i.adicionais?.tipoCompra === 'embalagem' ? 'embalagem' : 'unitario'
+                    const precoUnit = Number(i.produto.preco || 0)
+                    const precoEmb = (i.produto as any).precoEmbalagem != null ? Number((i.produto as any).precoEmbalagem) : null
+                    const precoUsado = tp === 'embalagem' && precoEmb != null ? precoEmb : precoUnit
+                    const subt = precoUsado * Math.max(1, Number(i.quantidade || 1))
+                    return (
+                      <li key={idx} className="text-sm">
+                        <div className="font-medium">
+                          {i.produto.nome} x {i.quantidade}
+                          {tp === 'embalagem' && (
+                            <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[11px] font-medium">
+                              📦 Embalagem
+                              {i.produto && (i.produto as any).qtdPorEmbalagem ? (
+                                <span>(com {(i.produto as any).qtdPorEmbalagem} unidades)</span>
+                              ) : null}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-gray-600 mt-0.5">
+                          Subtotal: R$ {subt.toFixed(2).replace('.', ',')}
+                        </div>
+                        {perfil === 'ACAITERIA' && acaiOpcoes && i.adicionais && (
+                          <div className="mt-1 text-xs text-gray-700 space-y-0.5">
+                            <div>
+                              Sabor:{' '}
+                              {acaiOpcoes.sabores?.find((s: any) => s.id === i.adicionais.saborId)?.nome || 'Não informado'}
+                            </div>
+                            <div>
+                              Sorvete:{' '}
+                              {i.adicionais.sorveteId
+                                ? acaiOpcoes.sorvetes?.find((s: any) => s.id === i.adicionais.sorveteId)?.nome || 'Não informado'
+                                : 'Sem sorvete'}
+                            </div>
+                            <div>
+                              Acompanhamentos:{' '}
+                              {Array.isArray(i.adicionais.acompanhamentos) && i.adicionais.acompanhamentos.length > 0
+                                ? acaiOpcoes.acompanhamentos
+                                    ?.filter((a: any) => i.adicionais.acompanhamentos.includes(a.id))
+                                    .map((a: any) => a.nome)
+                                    .join(', ')
+                                : 'Nenhum'}
+                            </div>
+                            <div>
+                              Cobertura:{' '}
+                              {i.adicionais.coberturaId
+                                ? acaiOpcoes.coberturas?.find((c: any) => c.id === i.adicionais.coberturaId)?.nome ||
+                                  'Não informada'
+                                : 'Não informada'}
+                            </div>
+                            <div>
+                              Complementos:{' '}
+                              {Array.isArray(i.adicionais.complementos) && i.adicionais.complementos.length > 0
+                                ? acaiOpcoes.complementos
+                                    ?.filter((c: any) => i.adicionais.complementos.includes(c.id))
+                                    .map((c: any) => c.nome)
+                                    .join(', ')
+                                : 'Nenhum'}
+                            </div>
+                          </div>
+                        )}
+                      </li>
+                    )
+                  })}
+                </ul>
+                {(() => {
+                  let totalItens = 0
+                  for (const i of carrinho) {
+                    const tp = i.adicionais?.tipoCompra === 'embalagem' ? 'embalagem' : 'unitario'
+                    const precoUnit = Number(i.produto.preco || 0)
+                    const precoEmb = (i.produto as any).precoEmbalagem != null ? Number((i.produto as any).precoEmbalagem) : null
+                    const precoUsado = tp === 'embalagem' && precoEmb != null ? precoEmb : precoUnit
+                    totalItens += precoUsado * Math.max(1, Number(i.quantidade || 1))
+                  }
+                  const temMinimo = valorMinimoPedido != null && valorMinimoPedido > 0
+                  const abaixoMinimo = temMinimo && totalItens < valorMinimoPedido
+                  const falta = temMinimo && abaixoMinimo ? valorMinimoPedido - totalItens : 0
+                  return (
+                    <>
+                      <div className="mt-3 pt-2 border-t border-gray-200 flex items-center justify-between gap-2 flex-wrap">
+                        <div className="text-xs text-gray-600">Total dos itens:</div>
+                        <div className="font-semibold text-gray-900">
+                          R$ {totalItens.toFixed(2).replace('.', ',')}
+                        </div>
                       </div>
-                      {perfil === 'ACAITERIA' && acaiOpcoes && i.adicionais && (
-                        <div className="mt-1 text-xs text-gray-700 space-y-0.5">
-                          <div>
-                            Sabor:{' '}
-                            {acaiOpcoes.sabores?.find((s: any) => s.id === i.adicionais.saborId)?.nome || 'Não informado'}
-                          </div>
-                          <div>
-                            Sorvete:{' '}
-                            {i.adicionais.sorveteId
-                              ? acaiOpcoes.sorvetes?.find((s: any) => s.id === i.adicionais.sorveteId)?.nome || 'Não informado'
-                              : 'Sem sorvete'}
-                          </div>
-                          <div>
-                            Acompanhamentos:{' '}
-                            {Array.isArray(i.adicionais.acompanhamentos) && i.adicionais.acompanhamentos.length > 0
-                              ? acaiOpcoes.acompanhamentos
-                                  ?.filter((a: any) => i.adicionais.acompanhamentos.includes(a.id))
-                                  .map((a: any) => a.nome)
-                                  .join(', ')
-                              : 'Nenhum'}
-                          </div>
-                          <div>
-                            Cobertura:{' '}
-                            {i.adicionais.coberturaId
-                              ? acaiOpcoes.coberturas?.find((c: any) => c.id === i.adicionais.coberturaId)?.nome ||
-                                'Não informada'
-                              : 'Não informada'}
-                          </div>
-                          <div>
-                            Complementos:{' '}
-                            {Array.isArray(i.adicionais.complementos) && i.adicionais.complementos.length > 0
-                              ? acaiOpcoes.complementos
-                                  ?.filter((c: any) => i.adicionais.complementos.includes(c.id))
-                                  .map((c: any) => c.nome)
-                                  .join(', ')
-                              : 'Nenhum'}
-                          </div>
+                      {temMinimo && (
+                        <div className={`mt-2 p-2 rounded-lg text-xs whitespace-pre-wrap ${abaixoMinimo ? 'bg-red-50 border border-red-200 text-red-800' : 'bg-green-50 border border-green-200 text-green-800'}`}>
+                          {abaixoMinimo ? (
+                            <>
+                              ⚠️ <b>Valor mínimo do pedido:</b> R$ {Number(valorMinimoPedido).toFixed(2).replace('.', ',')}.
+                              {'\n'}Faltam <b>R$ {Number(falta).toFixed(2).replace('.', ',')}</b> para finalizar. Adicione mais itens.
+                            </>
+                          ) : (
+                            <>✅ Acima do valor mínimo (R$ {Number(valorMinimoPedido).toFixed(2).replace('.', ',')}). Tudo pronto para finalizar!</>
+                          )}
                         </div>
                       )}
-                    </li>
-                  ))}
-                </ul>
-                <div className="mt-2 flex gap-2">
-                  <button
-                    className="px-3 py-1 rounded-full border border-gray-300 hover:bg-gray-200"
-                    onClick={() => {
-                      setCategoriaSelecionada(null)
-                      setEstado('escolhendo_categoria')
-                    }}
-                  >
-                    Adicionar mais
-                  </button>
-                  <button
-                    className="px-3 py-1 rounded-full bg-primary text-white"
-                    onClick={() => {
-                      setMensagens(m => [...m, { de: 'bot', texto: 'Deseja retirada no balcão ou entrega?' }])
-                      setEstado('confirmando_endereco')
-                    }}
-                  >
-                    Continuar
-                  </button>
-                </div>
+                      <div className="mt-3 flex gap-2">
+                        <button
+                          className="px-3 py-1 rounded-full border border-gray-300 hover:bg-gray-200"
+                          onClick={() => {
+                            setCategoriaSelecionada(null)
+                            setEstado('escolhendo_categoria')
+                          }}
+                        >
+                          Adicionar mais
+                        </button>
+                        <button
+                          className={`px-3 py-1 rounded-full text-white ${abaixoMinimo ? 'opacity-50 cursor-not-allowed' : 'bg-primary'}`}
+                          disabled={abaixoMinimo}
+                          onClick={() => {
+                            if (abaixoMinimo) return
+                            setMensagens(m => [...m, { de: 'bot', texto: 'Deseja retirada no balcão ou entrega?' }])
+                            setEstado('confirmando_endereco')
+                          }}
+                          title={abaixoMinimo ? 'Adicione mais itens para atingir o valor mínimo' : ''}
+                        >
+                          Continuar
+                        </button>
+                      </div>
+                    </>
+                  )
+                })()}
               </div>
             </div>
           )}
@@ -1654,7 +2586,12 @@ export default function ChatPage({ tenantSlug }: { tenantSlug?: string }) {
             </div>
           </div>
         )}
-      </div>
-    </main>
-  )
+        {mostrarArcade && (
+        <div className="absolute inset-0 z-50 animate-in fade-in zoom-in duration-300 overflow-hidden">
+          <ArcadeMenu onBack={() => setMostrarArcade(false)} theme={theme} />
+        </div>
+      )}
+    </div>
+  </main>
+)
 }

@@ -52,7 +52,16 @@ export async function GET(req: NextRequest) {
       maxSabores: true,
       maxSorvetes: true,
       maxAcompanhamentos: true,
-      maxCoberturas: true
+      maxCoberturas: true,
+      marca: true,
+      unidade: true,
+      qtdPorEmbalagem: true,
+      precoEmbalagem: true,
+      destaque: true,
+      controlarEstoque: true,
+      estoque: true,
+      tempoPreparoMinutos: true,
+      ordemExibicao: true
     }
   })
 

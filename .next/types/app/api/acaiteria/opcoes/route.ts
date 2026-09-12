@@ -1,4 +1,4 @@
-// File: C:\Users\Wellington Macedo\Documents\trae_projects\sistema-delivery\app\api\acaiteria\opcoes\route.ts
+// File: C:\trae_projects\sistema-delivery\app\api\acaiteria\opcoes\route.ts
 import * as entry from '../../../../../../app/api/acaiteria/opcoes/route.js'
 import type { NextRequest } from 'next/server.js'
 
