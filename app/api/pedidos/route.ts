@@ -6,6 +6,8 @@ import { rateLimit, keyFromRequestHeaders } from '@/lib/rateLimit'
 import { logSistema } from '@/lib/log'
 import { revalidateTag } from 'next/cache'
 import { resolveTenant, safePerfil } from '@/lib/tenant'
+import { validarCupomUso } from '@/lib/cupom'
+import { calcularStatusAbertura } from '@/lib/horarioFuncionamento'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
@@ -120,6 +122,21 @@ export async function POST(req: NextRequest) {
   const { clienteTelefone, itens, formaEntrega, enderecoEntrega, metodoPagamento, trocoPara } = parsed.data as any
   const cupomCodigo: string = (body?.cupomCodigo ? String(body.cupomCodigo).trim().toUpperCase() : '') || ''
   const est = await resolveTenant(req)
+  if (est?.id) {
+    const status = calcularStatusAbertura({
+      abertoManual: est.aberto as any,
+      diasAtivos: est.diasAtivos as any,
+      horarioAbertura: (est as any).horarioAbertura,
+      horarioFechamento: (est as any).horarioFechamento
+    })
+    if (!status.aberto) {
+      const detalhe = status.horarioHojeAbre && status.horarioHojeFecha ? ` Horário hoje: ${status.horarioHojeAbre} → ${status.horarioHojeFecha}.` : ''
+      return Response.json(
+        { error: `Estabelecimento fechado no momento. ${status.motivo}.${detalhe}` },
+        { status: 400 }
+      )
+    }
+  }
   let cliente = await prisma.cliente.findFirst({
     where: { telefone: clienteTelefone, estabelecimentoId: est?.id || undefined }
   })
@@ -143,6 +160,7 @@ export async function POST(req: NextRequest) {
   }
   const perfil = safePerfil(est?.perfil) || 'LANCHONETE'
   const itensData: any[] = []
+  const itensCarrinho = []
   for (const i of itens as any[]) {
     const p = produtos.find(pp => pp.id === i.produtoId)!
     let base = Number(p.preco)
@@ -170,13 +188,20 @@ export async function POST(req: NextRequest) {
     if (perfil === 'DISTRIBUIDORA' && i.adicionais?.tipoCompra === 'embalagem' && p.precoEmbalagem != null) {
       base = Number(p.precoEmbalagem)
     }
-    const subtotal = (base + extras) * i.quantidade
+    const precoUnit = base + extras
+    const subtotal = precoUnit * i.quantidade
     itensData.push({
       produtoId: p.id,
       quantidade: i.quantidade,
       adicionais: i.adicionais,
       observacoes: i.observacoes,
       subtotal
+    })
+    itensCarrinho.push({
+      produtoId: p.id,
+      quantidade: i.quantidade,
+      precoUnitario: precoUnit,
+      adicionaisPreco: extras
     })
   }
   const totalItens = itensData.reduce((acc, cur) => acc + cur.subtotal, 0)
@@ -194,31 +219,19 @@ export async function POST(req: NextRequest) {
   const taxaBase =
     est && est.taxaEntregaPadrao != null ? Number(est.taxaEntregaPadrao) : Number(config?.taxaEntrega || 0)
   const taxaEntrega = formaEntrega === FormaEntrega.entrega ? taxaBase : 0
-  let desconto = 0
-  let cupomId: string | null = null
-  if (cupomCodigo && estId) {
-    const now = new Date()
-    const cupom = await prisma.cupom.findFirst({
-      where: {
-        estabelecimentoId: estId,
-        codigo: cupomCodigo,
-        ativo: true,
-        dataInicio: { lte: now },
-        dataFim: { gte: now }
-      }
-    })
-    if (cupom) {
-      const totalUsos = await prisma.cupomUso.count({ where: { cupomId: cupom.id } })
-      const limiteTotalOk = cupom.limiteTotalUso == null || totalUsos < cupom.limiteTotalUso
-      if (limiteTotalOk && (cupom.valorMinimoPedido == null || totalItens >= Number(cupom.valorMinimoPedido))) {
-        if (cupom.tipo === 'PERCENTUAL') desconto = (totalItens + taxaEntrega) * (Number(cupom.valor) / 100)
-        else if (cupom.tipo === 'VALOR_FIXO') desconto = Number(cupom.valor)
-        else if (cupom.tipo === 'FRETE_GRATIS') desconto = taxaEntrega
-        cupomId = cupom.id
-      }
-    }
-  }
-  if (desconto < 0) desconto = 0
+  const cupom = await validarCupomUso({
+    estId: estId || '',
+    cupomCodigo,
+    totalItens,
+    taxaEntrega,
+    clienteId: cliente.id,
+    clienteTelefone: clienteTelefone || cliente.telefone || null,
+    itensCarrinho
+  })
+  const desconto = Math.max(0, cupom.desconto)
+  const cupomId = cupom.cupomId
+  const cupomMotivo = cupom.motivo
+  const cupomAplicado = cupom.aplicado
   const total = Math.max(0, totalItens + taxaEntrega - desconto)
   if (total <= 0) {
     return Response.json({ error: 'pedido com valor zero' }, { status: 400 })
@@ -226,7 +239,7 @@ export async function POST(req: NextRequest) {
   const pedido = await prisma.pedido.create({
     data: {
       clienteId: cliente.id,
-      status: metodoPagamento && metodoPagamento !== 'pix' ? StatusPedido.preparando : StatusPedido.aberto,
+      status: metodoPagamento === 'pix' ? StatusPedido.aguardando_pix : StatusPedido.aberto,
       total,
       valorDesconto: desconto || null,
       formaEntrega,
@@ -286,5 +299,5 @@ export async function POST(req: NextRequest) {
   }
   await logSistema('pedido_criado', `Pedido ${pedido.id} total=${total}`)
   revalidateTag('pedidos')
-  return Response.json({ pedido, taxaEntrega })
+  return Response.json({ pedido, taxaEntrega, cupomAplicado, cupomMotivo })
 }

@@ -4,6 +4,7 @@ import { sendOrderToWhatsApp } from '@/lib/whatsapp/sendOrderToWhatsApp'
 import { useParams, useSearchParams } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 import { safePerfil, perfilLabel } from '@/lib/perfil'
+import { calcularStatusAbertura, type StatusAberturaResultado } from '@/lib/horarioFuncionamento'
 
 type Produto = {
   id: string
@@ -68,11 +69,28 @@ export default function ChatPage() {
   const [carrinho, setCarrinho] = useState<ItemCarrinho[]>([])
   const [formaEntrega, setFormaEntrega] = useState<'entrega' | 'retirada'>('retirada')
   const [endereco, setEndereco] = useState<any | null>(null)
-  const [resumoTotal, setResumoTotal] = useState<{ total: number; taxaEntrega: number; desconto?: number } | null>(null)
+  const [resumoTotal, setResumoTotal] = useState<{
+    total: number
+    taxaEntrega: number
+    desconto?: number
+    cupomAplicado?: boolean | null
+    cupomMotivo?: string | null
+    baseCalculoElegivel?: number | null
+    categoriaLabel?: string | null
+    produtoLabel?: string | null
+    itensAplicados?: {
+      produtoId: string
+      produtoNome?: string | null
+      quantidade: number
+      subtotal: number
+      descontoRecebido: number
+    }[] | null
+  } | null>(null)
   const [cupomCodigo, setCupomCodigo] = useState<string>('')
   const [pedidoId, setPedidoId] = useState<string | null>(null)
-  const [pix, setPix] = useState<{ txid: string; qrcode: string; copiaECola: string } | null>(null)
+  const [pix, setPix] = useState<{ txid: string; qrcode: string; copiaECola: string; simulado?: boolean } | null>(null)
   const [loading, setLoading] = useState(false)
+  const [statusAbertura, setStatusAbertura] = useState<StatusAberturaResultado | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const [perfil, setPerfil] = useState<'LANCHONETE' | 'ACAITERIA' | 'PIZZARIA' | 'DISTRIBUIDORA'>('LANCHONETE')
   const [acaiOpcoes, setAcaiOpcoes] = useState<any | null>(null)
@@ -168,7 +186,7 @@ export default function ChatPage() {
     setMensagens(m => [...m, { de: 'bot', texto: 'Perfeito! Vamos ao cardápio 😊' }])
     const aberto = await carregarPerfil()
     if (!aberto) {
-      setMensagens(m => [...m, { de: 'bot', texto: 'Estamos fechados no momento. Volte mais tarde 😊' }])
+      setMensagens(m => [...m, { de: 'bot', texto: mensagemFechado() }])
       setEstado('finalizado')
       return
     }
@@ -183,7 +201,7 @@ export default function ChatPage() {
     setMensagens(m => [...m, { de: 'bot', texto: '🔁 Repetindo seu último pedido...' }])
     const aberto = await carregarPerfil()
     if (!aberto) {
-      setMensagens(m => [...m, { de: 'bot', texto: 'Estamos fechados no momento. Volte mais tarde 😊' }])
+      setMensagens(m => [...m, { de: 'bot', texto: mensagemFechado() }])
       setEstado('finalizado')
       return
     }
@@ -315,7 +333,7 @@ export default function ChatPage() {
               setMensagens(m => [...m, { de: 'bot', texto: 'Que bom ter você de volta 😊' }])
               const aberto = await carregarPerfil()
               if (!aberto) {
-                setMensagens(m => [...m, { de: 'bot', texto: 'Estamos fechados no momento. Volte mais tarde 😊' }])
+                setMensagens(m => [...m, { de: 'bot', texto: mensagemFechado() }])
                 setEstado('finalizado')
                 return
               }
@@ -346,6 +364,17 @@ export default function ChatPage() {
   function headersWith(extra?: HeadersInit) {
     const base: Record<string, string> = tenantSlug ? { 'x-estabelecimento-slug': tenantSlug } : {}
     return { ...(extra as any), ...base }
+  }
+
+  function mensagemFechado(): string {
+    const s = statusAbertura
+    const linhas = ['🔒 Atendimento fechado no momento.']
+    if (s?.motivo) linhas.push(s.motivo)
+    if (s?.horarioHojeAbre && s?.horarioHojeFecha) {
+      linhas.push(`Horário hoje: ${s.horarioHojeAbre} → ${s.horarioHojeFecha}`)
+    }
+    linhas.push('Volte mais tarde 😊')
+    return linhas.join('\n')
   }
 
   async function iniciarCliente() {
@@ -506,7 +535,14 @@ export default function ChatPage() {
         })
         const minRaw = Number(t?.valorMinimoPedido)
         setValorMinimoPedido(isNaN(minRaw) || minRaw <= 0 ? null : minRaw)
-        if (t && t.aberto === false) {
+        const status = calcularStatusAbertura({
+          abertoManual: t?.aberto,
+          diasAtivos: t?.diasAtivos,
+          horarioAbertura: t?.horarioAbertura,
+          horarioFechamento: t?.horarioFechamento
+        })
+        setStatusAbertura(status)
+        if (!status.aberto) {
           return false
         }
         // Robust profile detection: favor Açaíteria if endpoint is available or slug hints it
@@ -743,11 +779,21 @@ export default function ChatPage() {
         const ct = r.headers.get('content-type') || ''
         if (ct.includes('application/json')) {
           const d = await r.json()
-          setResumoTotal(
-            typeof d?.total === 'number'
-              ? { total: d.total, taxaEntrega: Number(d.taxaEntrega || 0), desconto: Number(d.desconto || 0) }
-              : null
-          )
+          if (typeof d?.total === 'number') {
+            setResumoTotal({
+              total: d.total,
+              taxaEntrega: Number(d.taxaEntrega || 0),
+              desconto: Number(d.desconto || 0),
+              cupomAplicado: typeof d?.cupomAplicado === 'boolean' ? d.cupomAplicado : null,
+              cupomMotivo: typeof d?.cupomMotivo === 'string' ? d.cupomMotivo : null,
+              baseCalculoElegivel: typeof d?.baseCalculoElegivel === 'number' ? Number(d.baseCalculoElegivel) : null,
+              categoriaLabel: typeof d?.categoriaLabel === 'string' && d.categoriaLabel ? d.categoriaLabel : null,
+              produtoLabel: typeof d?.produtoLabel === 'string' && d.produtoLabel ? d.produtoLabel : null,
+              itensAplicados: Array.isArray(d?.itensAplicados) && d.itensAplicados.length > 0 ? d.itensAplicados : null
+            })
+          } else {
+            setResumoTotal(null)
+          }
         } else {
           setResumoTotal(null)
         }
@@ -762,6 +808,16 @@ export default function ChatPage() {
   }
 
   async function finalizarPedido(metodo: 'pix' | 'dinheiro' | 'cartao', trocoPara?: number) {
+    if (statusAbertura && !statusAbertura.aberto) {
+      const linhas = ['🔒 Atendimento fechado no momento.']
+      if (statusAbertura?.motivo) linhas.push(statusAbertura.motivo)
+      if (statusAbertura?.horarioHojeAbre && statusAbertura?.horarioHojeFecha) {
+        linhas.push(`Horário de hoje: ${statusAbertura.horarioHojeAbre} → ${statusAbertura.horarioHojeFecha}`)
+      }
+      linhas.push('Volte mais tarde 😊')
+      setMensagens(m => [...m, { de: 'bot', texto: linhas.join('\n') }])
+      return
+    }
     setLoading(true)
     const itens = carrinho.map(i => ({
       produtoId: i.produto.id,
@@ -817,11 +873,17 @@ export default function ChatPage() {
           body: JSON.stringify({ pedidoId: d.pedido.id })
         })
         if (!rp.ok) {
-          setMensagens(m => [
-            ...m,
-            { de: 'bot', texto: 'Seu pedido foi criado, mas houve erro ao gerar o Pix. Tente outra forma de pagamento.' }
-          ])
-          setEstado('finalizado')
+          let msgDetalhe = ''
+          try {
+            const errPix = await rp.json()
+            if (errPix?.error) msgDetalhe = String(errPix.error)
+          } catch {}
+          const mensagem =
+            msgDetalhe.trim()
+              ? `Seu pedido ${d.pedido.id} foi criado, mas houve erro ao gerar o Pix:\n⚠️ ${msgDetalhe}\n\nEscolha outra forma de pagamento abaixo.`
+              : `Seu pedido ${d.pedido.id} foi criado, mas houve erro ao gerar o Pix. Escolha outra forma de pagamento abaixo.`
+          setMensagens(m => [...m, { de: 'bot', texto: mensagem }])
+          setEstado('escolhendo_pagamento')
           return
         }
         const pct = rp.headers.get('content-type') || ''
@@ -1063,6 +1125,22 @@ export default function ChatPage() {
             )}
           </button>
         </div>
+        {statusAbertura && !statusAbertura.aberto && (
+          <div className="bg-red-50 border-b border-red-200 px-4 py-2 text-[11px] text-red-800 flex flex-col gap-1">
+            <div className="flex items-center gap-1.5 font-semibold text-red-900">
+              <span>🔒</span>
+              <span>Atendimento fechado</span>
+            </div>
+            {statusAbertura.motivo && (
+              <div className="leading-snug">{statusAbertura.motivo}</div>
+            )}
+            {statusAbertura.horarioHojeAbre && statusAbertura.horarioHojeFecha && (
+              <div className="text-red-700/90 leading-snug">
+                Hoje: <span className="font-medium">{statusAbertura.horarioHojeAbre} → {statusAbertura.horarioHojeFecha}</span>
+              </div>
+            )}
+          </div>
+        )}
         <div ref={scrollRef} className="flex-1 overflow-y-auto space-y-3 p-4">
           {mensagens.map((m, i) => {
             const isBot = m.de === 'bot'
@@ -1954,10 +2032,54 @@ export default function ChatPage() {
                   <>
                     <div>Total final:</div>
                     <div className="mt-1 text-sm">Taxa de entrega: R$ {Number(resumoTotal.taxaEntrega).toFixed(2)}</div>
-                {typeof resumoTotal.desconto === 'number' && resumoTotal.desconto > 0 && (
-                  <div className="mt-1 text-sm">Desconto aplicado: -R$ {Number(resumoTotal.desconto).toFixed(2)}</div>
-                )}
+                    {typeof resumoTotal.desconto === 'number' && resumoTotal.desconto > 0 && (
+                      <div className="mt-1 text-sm">Desconto aplicado: -R$ {Number(resumoTotal.desconto).toFixed(2)}</div>
+                    )}
                     <div className="mt-1 font-medium">Total: R$ {Number(resumoTotal.total).toFixed(2)}</div>
+                    {cupomCodigo.trim() && resumoTotal.cupomMotivo && (
+                      <div
+                        className={
+                          'mt-2 rounded-lg px-3 py-1.5 text-xs border ' +
+                          (resumoTotal.cupomAplicado === true
+                            ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                            : 'bg-amber-50 border-amber-200 text-amber-800')
+                        }
+                      >
+                        {resumoTotal.cupomAplicado === true ? '✅ ' : '⚠️ '}
+                        Cupom <span className="font-mono font-medium">{cupomCodigo.trim().toUpperCase()}</span>:{' '}
+                        {resumoTotal.cupomMotivo}
+                      </div>
+                    )}
+                    {resumoTotal.cupomAplicado === true &&
+                      resumoTotal.itensAplicados &&
+                      resumoTotal.itensAplicados.length > 0 && (
+                        <div className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50/60 px-3 py-2 text-[11px] text-emerald-900">
+                          <div className="font-semibold mb-1">
+                            🎯 Itens que receberam o desconto deste cupom:
+                          </div>
+                          <ul className="space-y-1">
+                            {resumoTotal.itensAplicados.map(ia => (
+                              <li key={ia.produtoId} className="flex items-center justify-between gap-2">
+                                <span className="truncate">
+                                  <span className="font-medium">{ia.quantidade}x</span>{' '}
+                                  {ia.produtoNome || ia.produtoId}
+                                </span>
+                                <span className="font-mono whitespace-nowrap">
+                                  − R$ {Number(ia.descontoRecebido || 0).toFixed(2)}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                          {typeof resumoTotal.baseCalculoElegivel === 'number' && (
+                            <div className="mt-1.5 pt-1 border-t border-emerald-200/60 text-emerald-800">
+                              Base de cálculo elegível:{' '}
+                              <span className="font-mono font-semibold">
+                                R$ {Number(resumoTotal.baseCalculoElegivel).toFixed(2)}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      )}
                 <div className="mt-3">
                   <div className="text-sm mb-1">Possui cupom de desconto?</div>
                   <div className="flex gap-2">
@@ -2000,16 +2122,41 @@ export default function ChatPage() {
           {pix && (
             <div className="flex">
               <div className="max-w-[85%] rounded-2xl rounded-tl-sm px-3 py-2" style={{ backgroundColor: theme.corBot, color: theme.corTexto }}>
-                <div className="font-medium">Pagamento Pix</div>
+                <div className="flex items-center gap-2">
+                  <div className="font-medium">Pagamento Pix</div>
+                  {pix.simulado && (
+                    <span className="inline-flex items-center rounded-full bg-amber-100 text-amber-800 border border-amber-200 px-2 py-0.5 text-[10px] font-semibold">
+                      Ambiente de demonstração
+                    </span>
+                  )}
+                </div>
                 <div className="text-sm mt-1">TxID: {pix.txid}</div>
                 <div className="mt-2">
-                  {pix.qrcode && pix.qrcode.startsWith('data:') ? (
-                    <img src={pix.qrcode} alt="QR Code Pix" className="w-60 h-60 rounded-lg" />
+                  {pix.qrcode && (typeof pix.qrcode !== 'string' || pix.qrcode.startsWith('data:')) ? (
+                    <img src={pix.qrcode as any} alt="QR Code Pix" className="w-60 h-60 rounded-lg" />
                   ) : (
                     <div className="text-sm">QRCode: {pix.qrcode}</div>
                   )}
                 </div>
-                <div className="mt-2 text-sm">Copia e cola: {pix.copiaECola}</div>
+                <div className="mt-2 text-sm">
+                  <div className="font-medium mb-1">Copia e cola:</div>
+                  <div className="select-all break-all bg-white/70 dark:bg-black/10 border border-black/10 rounded-lg p-2 text-[11px] font-mono leading-relaxed">
+                    {pix.copiaECola}
+                  </div>
+                  <button
+                    className="mt-2 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium"
+                    style={{ backgroundColor: theme.corPrimaria, color: '#fff' }}
+                    onClick={async () => {
+                      try {
+                        if (navigator?.clipboard?.writeText) {
+                          await navigator.clipboard.writeText(pix.copiaECola)
+                        }
+                      } catch {}
+                    }}
+                  >
+                    📋 Copiar código Pix
+                  </button>
+                </div>
               </div>
             </div>
           )}

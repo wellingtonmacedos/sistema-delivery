@@ -133,6 +133,7 @@ model Produto {
   categoriaRef      Categoria? @relation(fields: [categoriaId], references: [id])
   variacoes         Variacao[]
   adicionaisRef     Adicional[]
+  cupons            CupomProduto[]
 }
 
 model Categoria {
@@ -145,6 +146,7 @@ model Categoria {
   ordemExibicao   Int? 
   ativo           Boolean  @default(true)
   produtos        Produto[]
+  cupons          CupomCategoria[]
   createdAt       DateTime @default(now())
 }
 
@@ -386,9 +388,31 @@ model Cupom {
   ativo             Boolean  @default(true)
   usos              CupomUso[]
   pedidos           Pedido[]
+  categoriasAplicaveis CupomCategoria[]
+  produtosAplicaveis   CupomProduto[]
   createdAt         DateTime @default(now())
 
   @@unique([estabelecimentoId, codigo])
+}
+
+model CupomCategoria {
+  cupomId     String
+  categoriaId String
+  cupom       Cupom     @relation(fields: [cupomId], references: [id], onDelete: Cascade)
+  categoria   Categoria @relation(fields: [categoriaId], references: [id], onDelete: Cascade)
+
+  @@id([cupomId, categoriaId])
+  @@index([categoriaId])
+}
+
+model CupomProduto {
+  cupomId   String
+  produtoId String
+  cupom     Cupom   @relation(fields: [cupomId], references: [id], onDelete: Cascade)
+  produto   Produto @relation(fields: [produtoId], references: [id], onDelete: Cascade)
+
+  @@id([cupomId, produtoId])
+  @@index([produtoId])
 }
 
 model CupomUso {

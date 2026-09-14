@@ -34,18 +34,32 @@ export default async function AdminHome() {
   const currency = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' })
   const cor = ctx?.estabelecimento?.corPrimaria || '#111827'
   const perfilLabelText = perfilLabel(ctx?.estabelecimento?.perfil)
+  const totalPendentes = (pedidosPorStatus.aberto || 0) + (pedidosPorStatus.aguardando_pix || 0)
   return (
     <main className="min-h-screen">
       <div className="max-w-6xl mx-auto">
         <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
-            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Visão geral</div>
-            <div className="mt-1 text-2xl font-semibold text-slate-900">Painel Administrativo</div>
-            <div className="mt-1 flex items-center gap-2 text-sm text-slate-600">
-              <span>{ctx?.estabelecimento?.nome || '—'}</span>
-              <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-slate-700">
-                {perfilLabelText}
-              </span>
+            <div className="flex flex-wrap items-center gap-3">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Visão geral</div>
+                <div className="mt-1 text-2xl font-semibold text-slate-900">Painel Administrativo</div>
+                <div className="mt-1 flex items-center gap-2 text-sm text-slate-600">
+                  <span>{ctx?.estabelecimento?.nome || '—'}</span>
+                  <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-slate-700">
+                    {perfilLabelText}
+                  </span>
+                </div>
+              </div>
+              {totalPendentes > 0 && (
+                <Link
+                  href="/admin/pedidos"
+                  title="Ir para a lista de pedidos pendentes"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-red-600 text-white text-xs font-bold uppercase tracking-wide shadow-md shadow-red-500/30 hover:bg-red-700 hover:shadow-lg hover:-translate-y-0.5 transition animate-pulse"
+                >
+                  🔔 {totalPendentes} Pedido{totalPendentes === 1 ? '' : 's'} Pendente{totalPendentes === 1 ? '' : 's'}
+                </Link>
+              )}
             </div>
           </div>
           <div className="flex gap-2 text-xs text-slate-500">
@@ -53,7 +67,29 @@ export default async function AdminHome() {
           </div>
         </div>
 
-        <section className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        <section className={`grid grid-cols-1 gap-4 ${totalPendentes > 0 ? 'md:grid-cols-2 lg:grid-cols-5' : 'md:grid-cols-4'}`}>
+          {totalPendentes > 0 && (
+            <Link
+              href="/admin/pedidos"
+              className="group rounded-2xl border-2 border-red-200 bg-gradient-to-br from-red-50 to-white p-4 shadow-md shadow-red-100 transition hover:-translate-y-0.5 hover:shadow-xl hover:shadow-red-100 hover:border-red-300"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <div className="text-xs font-bold uppercase tracking-wide text-red-700">Atenção! Pendentes</div>
+                  <div className="mt-2 flex items-baseline gap-1.5">
+                    <span className="text-3xl font-extrabold text-red-700">{totalPendentes}</span>
+                    <span className="text-[11px] font-medium text-red-600 animate-pulse">novo{totalPendentes === 1 ? '' : 's'}</span>
+                  </div>
+                  <div className="mt-2 text-[11px] text-red-700/90">
+                    {pedidosPorStatus.aberto || 0} aberto{pedidosPorStatus.aberto === 1 ? '' : 's'} · {pedidosPorStatus.aguardando_pix || 0} ag. pix
+                  </div>
+                </div>
+                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-red-600 text-white text-lg shadow-sm shadow-red-600/40 animate-pulse">
+                  🔔
+                </div>
+              </div>
+            </Link>
+          )}
           <div className="group rounded-2xl border border-slate-100 bg-white/60 p-4 shadow-sm shadow-slate-100 transition hover:-translate-y-0.5 hover:shadow-md">
             <div className="flex items-start justify-between gap-2">
               <div>
@@ -109,9 +145,9 @@ export default async function AdminHome() {
             </div>
             <div className="grid grid-cols-1 gap-2">
               {Object.entries(pedidosPorStatus).map(([s, c]) => {
-                const map: Record<string, { label: string; className: string }> = {
-                  aberto: { label: 'Aberto', className: 'bg-sky-50 text-sky-700 border-sky-100' },
-                  aguardando_pix: { label: 'Aguardando Pix', className: 'bg-amber-50 text-amber-700 border-amber-100' },
+                const map: Record<string, { label: string; className: string; urgente?: boolean }> = {
+                  aberto: { label: 'Aberto', className: 'bg-sky-50 text-sky-700 border-sky-100', urgente: true },
+                  aguardando_pix: { label: 'Aguardando Pix', className: 'bg-amber-50 text-amber-700 border-amber-100', urgente: true },
                   pago: { label: 'Pago', className: 'bg-emerald-50 text-emerald-700 border-emerald-100' },
                   preparando: { label: 'Preparando', className: 'bg-violet-50 text-violet-700 border-violet-100' },
                   saiu_para_entrega: { label: 'Saiu para entrega', className: 'bg-orange-50 text-orange-700 border-orange-100' },
@@ -119,13 +155,21 @@ export default async function AdminHome() {
                   cancelado: { label: 'Cancelado', className: 'bg-rose-50 text-rose-700 border-rose-100' }
                 }
                 const cfg = map[s] || { label: s, className: 'bg-slate-50 text-slate-700 border-slate-100' }
+                const destaque = cfg.urgente && c > 0
                 return (
                   <div
                     key={s}
-                    className={`flex items-center justify-between rounded-xl border px-3 py-2 text-xs ${cfg.className}`}
+                    className={`flex items-center justify-between rounded-xl border px-3 py-2 text-xs transition ${
+                      destaque ? `${cfg.className} ring-2 ring-red-200 shadow-sm shadow-red-100 border-red-200` : cfg.className
+                    }`}
                   >
-                    <span className="font-medium">{cfg.label}</span>
-                    <span className="text-sm font-semibold">{c}</span>
+                    <span className="font-medium flex items-center gap-1.5">
+                      {destaque && <span className="inline-block h-2 w-2 rounded-full bg-red-500 animate-pulse" />}
+                      {cfg.label}
+                    </span>
+                    <span className={`text-sm font-semibold ${destaque ? 'text-red-700' : ''}`}>
+                      {c}
+                    </span>
                   </div>
                 )
               })}

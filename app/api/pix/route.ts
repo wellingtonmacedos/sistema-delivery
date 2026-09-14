@@ -16,16 +16,28 @@ export async function POST(req: NextRequest) {
   if (!pedido) {
     return Response.json({ error: 'pedido não encontrado' }, { status: 404 })
   }
-  const cobranca = await gerarCobrancaPix(pedido.id, Number(pedido.total))
-  await prisma.pedido.update({
-    where: { id: pedido.id },
-    data: { status: StatusPedido.aguardando_pix }
-  })
-  await prisma.pagamento.upsert({
-    where: { pedidoId: pedido.id },
-    update: { tipo: 'pix', valor: pedido.total, status: 'pendente', txid: cobranca.txid, qrcode: cobranca.qrcode },
-    create: { pedidoId: pedido.id, tipo: 'pix', valor: pedido.total, status: 'pendente', txid: cobranca.txid, qrcode: cobranca.qrcode }
-  })
-  await logSistema('pix_gerado', `Pedido ${pedido.id} txid=${cobranca.txid}`)
-  return Response.json({ txid: cobranca.txid, qrcode: cobranca.qrcode, copiaECola: cobranca.copiaECola })
+  try {
+    const cobranca = await gerarCobrancaPix(pedido.id, Number(pedido.total))
+    await prisma.pedido.update({
+      where: { id: pedido.id },
+      data: { status: StatusPedido.aguardando_pix }
+    })
+    await prisma.pagamento.upsert({
+      where: { pedidoId: pedido.id },
+      update: { tipo: 'pix', valor: pedido.total, status: 'pendente', txid: cobranca.txid, qrcode: cobranca.qrcode },
+      create: { pedidoId: pedido.id, tipo: 'pix', valor: pedido.total, status: 'pendente', txid: cobranca.txid, qrcode: cobranca.qrcode }
+    })
+    await logSistema('pix_gerado', `Pedido ${pedido.id} txid=${cobranca.txid}${cobranca.simulado ? ' (simulado)' : ''}`)
+    return Response.json({
+      txid: cobranca.txid,
+      qrcode: cobranca.qrcode,
+      copiaECola: cobranca.copiaECola,
+      simulado: !!cobranca.simulado
+    })
+  } catch (e: any) {
+    const msg = String(e?.message || e || 'erro ao gerar pix')
+    await logSistema('pix_erro', `Pedido ${pedido.id}: ${msg}`)
+    console.error('[pix erro] pedido=', pedido.id, 'msg=', msg)
+    return Response.json({ error: msg }, { status: 502 })
+  }
 }

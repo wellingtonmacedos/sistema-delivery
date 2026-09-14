@@ -81,6 +81,7 @@ const currency = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: '
 
 let newOrderAudio: HTMLAudioElement | null = null
 let newOrderAudioEnabled = false
+let notificationPermRequested = false
 
 function initNewOrderSound() {
   if (typeof window === 'undefined') return
@@ -102,13 +103,60 @@ function initNewOrderSound() {
   } catch {}
 }
 
-function playNewOrderSound() {
+function requestBrowserNotificationPermission() {
   if (typeof window === 'undefined') return
+  if (!('Notification' in window)) return
+  if (Notification.permission === 'granted' || Notification.permission === 'denied') return
+  if (notificationPermRequested) return
+  notificationPermRequested = true
+  try {
+    Notification.requestPermission().catch(() => {})
+  } catch {}
+}
+
+async function playNewOrderSound(playTwice = true) {
+  if (typeof window === 'undefined') return
+  if ('vibrate' in navigator) {
+    try {
+      navigator.vibrate(playTwice ? [300, 100, 300] : [250])
+    } catch {}
+  }
   if (!newOrderAudioEnabled || !newOrderAudio) return
   try {
-    newOrderAudio.pause()
-    newOrderAudio.currentTime = 0
-    newOrderAudio.play().catch(() => {})
+    const playOnce = async () => {
+      if (!newOrderAudio) return
+      try {
+        newOrderAudio.pause()
+        newOrderAudio.currentTime = 0
+        await newOrderAudio.play().catch(() => {})
+      } catch {}
+    }
+    await playOnce()
+    if (playTwice) {
+      setTimeout(() => playOnce(), 450)
+    }
+  } catch {}
+}
+
+async function notifyNewOrder(labels: { titulo: string; body?: string } | null) {
+  if (typeof window === 'undefined') return
+  if (!('Notification' in window)) return
+  if (Notification.permission !== 'granted') return
+  try {
+    if (labels) {
+      const n = new Notification(labels.titulo, {
+        body: labels.body || undefined,
+        tag: 'sistema-delivery-novos-pedidos',
+        renotify: true,
+        requireInteraction: true
+      })
+      n.onclick = () => {
+        try {
+          window.focus()
+        } catch {}
+        n.close()
+      }
+    }
   } catch {}
 }
 
@@ -129,53 +177,66 @@ export default function AdminPedidos() {
   const knownIdsRef = useRef<Set<string>>(new Set())
   const [somAtivo, setSomAtivo] = useState(false)
 
-  async function carregarAdmin() {
+  async function carregarAdmin(): Promise<{ estId: string | null } | null> {
     try {
       const r = await fetch('/api/admin/configuracoes/estabelecimento', { credentials: 'include' })
       if (!r.ok) {
         const d = await r.json().catch(() => ({}))
         setErro(d?.error || 'Sessão expirada. Faça login novamente.')
-        return
+        return null
       }
       const d = await r.json()
       const role = d?.admin?.role || ''
+      const adminOwnEstId = d?.estabelecimento?.id || ''
       setIsSuperAdmin(role === 'SUPER_ADMIN')
       if (role === 'SUPER_ADMIN') {
+        let arr: Estabelecimento[] = []
         try {
           const estsR = await fetch('/api/super-admin/estabelecimentos', { credentials: 'include' })
           if (estsR.ok) {
             const data = await estsR.json()
-            const arr = Array.isArray(data?.estabelecimentos) ? data.estabelecimentos : []
-            setEstabelecimentos(arr)
-            if (!selectedEstId && arr.length > 0) {
-              const defaultId =
-                arr.find((e: any) => e.id === d?.estabelecimento?.id)?.id ||
-                [...arr].sort((a: any, b: any) => (a.createdAt || '').localeCompare(b.createdAt || ''))[0]
-                  ?.id ||
-                arr[0].id
-              setSelectedEstId(defaultId)
-            } else if (!selectedEstId) {
-              setSelectedEstId(d?.estabelecimento?.id || '')
-            }
+            arr = Array.isArray(data?.estabelecimentos) ? data.estabelecimentos : []
           }
-        } catch {}
+        } catch (e) {
+          console.error('Super Admin: falha ao carregar estabelecimentos', e)
+        }
+        setEstabelecimentos(arr)
+        let chosen = ''
+        if (!chosen && arr.length > 0) {
+          chosen =
+            arr.find(e => e.id === adminOwnEstId)?.id ||
+            [...arr].sort((a: any, b: any) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')))[0]?.id ||
+            arr[0].id || ''
+        }
+        if (!chosen) {
+          chosen = adminOwnEstId
+        }
+        if (!selectedEstId) {
+          setSelectedEstId(chosen)
+        }
+        return { estId: selectedEstId || chosen }
       } else {
-        setSelectedEstId(d?.estabelecimento?.id || '')
+        if (!selectedEstId) {
+          setSelectedEstId(adminOwnEstId)
+        }
+        return { estId: selectedEstId || adminOwnEstId }
       }
     } catch (e: any) {
       setErro('Não foi possível carregar o usuário administrador.')
+      return null
     }
   }
 
-  async function carregar() {
-    if (!selectedEstId) {
+  async function carregar(estIdOverride?: string) {
+    const estId = estIdOverride || selectedEstId
+    if (!estId) {
       setPedidos([])
       setLoading(false)
       return
     }
     try {
       setErro(null)
-      const url = `/api/admin/pedidos?estId=${encodeURIComponent(selectedEstId)}`
+      const url = `/api/admin/pedidos?estId=${encodeURIComponent(estId)}`
       const res = await fetch(url, { credentials: 'include', cache: 'no-store' as any })
       if (!res.ok) {
         const d = await res.json().catch(() => ({}))
@@ -189,10 +250,44 @@ export default function AdminPedidos() {
       }
       const data = await res.json()
       const lista: Pedido[] = data?.pedidos || []
+      const novos: Pedido[] = []
       if (carregadoRef.current) {
         const known = knownIdsRef.current
-        const novos = lista.filter(p => !known.has(p.id))
-        if (novos.length > 0) playNewOrderSound()
+        for (const p of lista) {
+          if (!known.has(p.id)) {
+            novos.push(p)
+          }
+        }
+        if (novos.length > 0) {
+          playNewOrderSound(true)
+          try {
+            const body = novos.slice(0, 3).map((p, i) => {
+              const fmt = (n: number) =>
+                n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+              const total = fmt(Number(p.total || 0))
+              const nome = p.cliente?.nome || 'Cliente'
+              return `${i + 1}. ${nome} · ${total}`
+            }).join('\n')
+            await notifyNewOrder({
+              titulo:
+                novos.length === 1
+                  ? `🔔 Novo pedido #${pedidoCodigoCurto(novos[0].id)}`
+                  : `🔔 ${novos.length} novos pedidos chegaram!`,
+              body: novos.length <= 3 ? body : `${body}\n... e mais ${novos.length - 3}.`
+            })
+          } catch {}
+        }
+      } else {
+        // Primeiro carregamento: tocar som se houver pedidos pendentes (aberto ou aguardando_pix)
+        // para evitar o cenário do admin entrar na tela e não perceber que já tinha pedido novo esperando.
+        const pendentes = lista.filter(
+          p => p.status === 'aberto' || p.status === 'aguardando_pix'
+        )
+        if (pendentes.length > 0 && newOrderAudioEnabled) {
+          try {
+            playNewOrderSound(pendentes.length > 1)
+          } catch {}
+        }
       }
       knownIdsRef.current = new Set(lista.map(p => p.id))
       setPedidos(lista)
@@ -216,9 +311,9 @@ export default function AdminPedidos() {
   useEffect(() => {
     let cancelled = false
     async function init() {
-      await carregarAdmin()
+      const admin = await carregarAdmin()
       if (!cancelled) {
-        carregar()
+        carregar(admin?.estId || undefined)
         carregarAcaiOpcoes()
       }
       if (typeof window !== 'undefined' && !cancelled) {
@@ -230,6 +325,7 @@ export default function AdminPedidos() {
               newOrderAudio = new Audio('/sounds/beep.mp3')
             }
             setSomAtivo(true)
+            requestBrowserNotificationPermission()
           }
         } catch {}
       }
@@ -270,6 +366,7 @@ export default function AdminPedidos() {
       return
     }
     initNewOrderSound()
+    requestBrowserNotificationPermission()
     setSomAtivo(true)
   }
 
@@ -440,12 +537,26 @@ export default function AdminPedidos() {
     const pagamentoStatus = p.pagamento?.status || 'desconhecido'
     const pagamentoTipo = p.pagamento?.tipo || 'n/d'
     const data = new Date(p.createdAt)
+    const pedidoPendente = p.status === 'aberto' || p.status === 'aguardando_pix'
     return (
-      <div key={p.id} className="bg-white rounded-xl shadow-sm border border-gray-100 p-3 md:p-4 space-y-3">
+      <div
+        key={p.id}
+        className={`bg-white rounded-xl shadow-sm border p-3 md:p-4 space-y-3 transition ${
+          pedidoPendente ? 'border-red-300 ring-2 ring-red-50 ring-offset-0 hover:border-red-400' : 'border-gray-100'
+        }`}
+      >
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
           <div className="space-y-1">
             <div className="flex flex-wrap items-center gap-2 text-sm">
               <span className="font-semibold text-gray-900">Pedido #{pedidoCodigoCurto(p.id)}</span>
+              {pedidoPendente && (
+                <span
+                  title="Aguardando atendimento"
+                  className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide bg-red-600 text-white animate-pulse shadow-sm shadow-red-500/30"
+                >
+                  🔔 Novo
+                </span>
+              )}
               <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${badgeClass(p.status)}`}>
                 {statusLabel(p.status)}
               </span>
@@ -557,6 +668,10 @@ export default function AdminPedidos() {
   }
 
   const pedidosAgrupados = useMemo(() => agrupadoPorStatus(pedidosFiltrados), [pedidosFiltrados])
+  const pedidosPendentesCount = useMemo(
+    () => pedidosFiltrados.filter(p => p.status === 'aberto' || p.status === 'aguardando_pix').length,
+    [pedidosFiltrados]
+  )
   const perfilLabelEst = (perfil: any) =>
     perfil === 'ACAITERIA'
       ? 'Açaiteria'
@@ -570,7 +685,17 @@ export default function AdminPedidos() {
     <main className="p-4 md:p-8 flex-1 overflow-auto bg-gray-50">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-800">Gerenciar Pedidos</h1>
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="text-2xl font-bold text-gray-800">Gerenciar Pedidos</h1>
+            {pedidosPendentesCount > 0 && (
+              <span
+                title={`${pedidosPendentesCount} pedido(s) aguardando atendimento`}
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-600 text-white text-xs font-bold uppercase tracking-wide shadow-md shadow-red-500/30 animate-pulse"
+              >
+                🔔 {pedidosPendentesCount} Pendente{pedidosPendentesCount === 1 ? '' : 's'}
+              </span>
+            )}
+          </div>
           {erro && (
             <div className="mt-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-1.5">
               {erro}
