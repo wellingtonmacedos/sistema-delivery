@@ -8,6 +8,7 @@ import { revalidateTag } from 'next/cache'
 import { resolveTenant, safePerfil } from '@/lib/tenant'
 import { validarCupomUso } from '@/lib/cupom'
 import { calcularStatusAbertura } from '@/lib/horarioFuncionamento'
+import { getConfiguracao } from '@/lib/config'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
@@ -215,7 +216,7 @@ export async function POST(req: NextRequest) {
       )
     }
   }
-  const config = await prisma.configuracao.findUnique({ where: { id: 1 } })
+  const config = await getConfiguracao(estId)
   const taxaBase =
     est && est.taxaEntregaPadrao != null ? Number(est.taxaEntregaPadrao) : Number(config?.taxaEntrega || 0)
   const taxaEntrega = formaEntrega === FormaEntrega.entrega ? taxaBase : 0

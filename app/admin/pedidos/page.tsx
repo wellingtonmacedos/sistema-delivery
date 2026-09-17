@@ -633,13 +633,25 @@ export default function AdminPedidos() {
           <div className="flex flex-wrap gap-2">
             <button
               className="px-3 py-1 rounded border text-xs hover:bg-gray-50"
-              onClick={() => window.print()}
+              onClick={() =>
+                window.open(
+                  `/admin/pedidos/${p.id}/imprimir?m=comanda`,
+                  `imp-comanda-${p.id.slice(0, 6)}`,
+                  'popup=yes,width=420,height=820,top=40,left=80,menubar=no,toolbar=no,location=no,status=no'
+                )
+              }
             >
               🖨️ Imprimir comanda
             </button>
             <button
               className="px-3 py-1 rounded border text-xs hover:bg-gray-50"
-              onClick={() => window.print()}
+              onClick={() =>
+                window.open(
+                  `/admin/pedidos/${p.id}/imprimir?m=completo`,
+                  `imp-completo-${p.id.slice(0, 6)}`,
+                  'popup=yes,width=620,height=900,top=40,left=540,menubar=no,toolbar=no,location=no,status=no'
+                )
+              }
             >
               🖨️ Imprimir pedido completo
             </button>

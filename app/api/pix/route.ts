@@ -5,6 +5,7 @@ import { StatusPedido } from '@prisma/client'
 import { PixCreateSchema } from '@/lib/validate'
 import { rateLimit, keyFromRequestHeaders } from '@/lib/rateLimit'
 import { logSistema } from '@/lib/log'
+import { getConfiguracao } from '@/lib/config'
 
 export async function POST(req: NextRequest) {
   const key = 'pix:' + keyFromRequestHeaders(req.headers)
@@ -17,7 +18,16 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'pedido não encontrado' }, { status: 404 })
   }
   try {
-    const cobranca = await gerarCobrancaPix(pedido.id, Number(pedido.total))
+    const cfg = await getConfiguracao(pedido.estabelecimentoId || null)
+    const cobranca = await gerarCobrancaPix(pedido.id, Number(pedido.total), {
+      accessTokenEnv: process.env.MERCADO_PAGO_ACCESS_TOKEN || process.env.PIX_ACCESS_TOKEN,
+      apiUrlEnv: process.env.PIX_API_URL,
+      apiKeyEnv: process.env.PIX_API_KEY,
+      accessTokenDb: cfg.pixApiKey || undefined,
+      chavePix: cfg.pixChave || undefined,
+      beneficiario: cfg.pixBeneficiario || undefined,
+      cidade: cfg.pixCidade || undefined
+    })
     await prisma.pedido.update({
       where: { id: pedido.id },
       data: { status: StatusPedido.aguardando_pix }
@@ -27,7 +37,7 @@ export async function POST(req: NextRequest) {
       update: { tipo: 'pix', valor: pedido.total, status: 'pendente', txid: cobranca.txid, qrcode: cobranca.qrcode },
       create: { pedidoId: pedido.id, tipo: 'pix', valor: pedido.total, status: 'pendente', txid: cobranca.txid, qrcode: cobranca.qrcode }
     })
-    await logSistema('pix_gerado', `Pedido ${pedido.id} txid=${cobranca.txid}${cobranca.simulado ? ' (simulado)' : ''}`)
+    await logSistema('pix_gerado', `Pedido ${pedido.id} (est=${pedido.estabelecimentoId || 'global'}) txid=${cobranca.txid}${cobranca.simulado ? ' (simulado)' : ''}`)
     return Response.json({
       txid: cobranca.txid,
       qrcode: cobranca.qrcode,

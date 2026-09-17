@@ -148,8 +148,10 @@ export const WebhookPixSchema = z.object({
 export const ConfigSchema = z.object({
   taxaEntrega: z.number().nonnegative().optional(),
   tempoEstimado: z.number().int().positive().optional(),
-  pixApiKey: z.string().min(1).optional(),
-  pixChave: z.string().min(1).optional()
+  pixApiKey: z.string().max(300).optional().or(z.null()),
+  pixChave: z.string().max(200).optional().or(z.null()),
+  pixBeneficiario: z.string().max(120).optional().or(z.null()),
+  pixCidade: z.string().max(60).optional().or(z.null())
 })
 
 export const AcaiSaborCreateSchema = z.object({

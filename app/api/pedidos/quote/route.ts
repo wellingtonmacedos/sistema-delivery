@@ -6,6 +6,7 @@ import { rateLimit, keyFromRequestHeaders } from '@/lib/rateLimit'
 import { resolveTenant, safePerfil } from '@/lib/tenant'
 import { validarCupomUso } from '@/lib/cupom'
 import { calcularStatusAbertura } from '@/lib/horarioFuncionamento'
+import { getConfiguracao } from '@/lib/config'
 
 type PedidoItemInput = {
   produtoId: string
@@ -105,7 +106,7 @@ export async function POST(req: NextRequest) {
         )
       }
     }
-    const config = await prisma.configuracao.findUnique({ where: { id: 1 } })
+    const config = await getConfiguracao(est?.id || null)
     const taxaBase =
       est && est.taxaEntregaPadrao != null ? Number(est.taxaEntregaPadrao) : Number(config?.taxaEntrega || 0)
     const taxaEntrega = formaEntrega === FormaEntrega.entrega ? taxaBase : 0

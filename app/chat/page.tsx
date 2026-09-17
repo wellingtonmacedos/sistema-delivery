@@ -1185,7 +1185,7 @@ export default function ChatPage() {
                 className="px-3 py-2 rounded-full text-xs font-semibold border border-gray-300 bg-white"
                 onClick={iniciarNovoPedido}
               >
-                🍔 Fazer novo pedido
+                🚚 Fazer novo pedido
               </button>
             </div>
           )}
@@ -1839,41 +1839,74 @@ export default function ChatPage() {
                         </div>
                         {perfil === 'ACAITERIA' && acaiOpcoes && i.adicionais && (
                           <div className="mt-1 text-xs text-gray-700 space-y-0.5">
-                            <div>
-                              Sabor:{' '}
-                              {acaiOpcoes.sabores?.find((s: any) => s.id === i.adicionais.saborId)?.nome || 'Não informado'}
-                            </div>
-                            <div>
-                              Sorvete:{' '}
-                              {i.adicionais.sorveteId
-                                ? acaiOpcoes.sorvetes?.find((s: any) => s.id === i.adicionais.sorveteId)?.nome || 'Não informado'
-                                : 'Sem sorvete'}
-                            </div>
-                            <div>
-                              Acompanhamentos:{' '}
-                              {Array.isArray(i.adicionais.acompanhamentos) && i.adicionais.acompanhamentos.length > 0
-                                ? acaiOpcoes.acompanhamentos
-                                    ?.filter((a: any) => i.adicionais.acompanhamentos.includes(a.id))
-                                    .map((a: any) => a.nome)
-                                    .join(', ')
-                                : 'Nenhum'}
-                            </div>
-                            <div>
-                              Cobertura:{' '}
-                              {i.adicionais.coberturaId
-                                ? acaiOpcoes.coberturas?.find((c: any) => c.id === i.adicionais.coberturaId)?.nome ||
-                                  'Não informada'
-                                : 'Não informada'}
-                            </div>
-                            <div>
-                              Complementos:{' '}
-                              {Array.isArray(i.adicionais.complementos) && i.adicionais.complementos.length > 0
-                                ? acaiOpcoes.complementos
-                                    ?.filter((c: any) => i.adicionais.complementos.includes(c.id))
-                                    .map((c: any) => c.nome)
-                                    .join(', ')
-                                : 'Nenhum'}
-                            </div>
+                            {(() => {
+                              const sabIds: string[] = Array.isArray(i.adicionais.sabores)
+                                ? i.adicionais.sabores
+                                : i.adicionais.saborId
+                                ? [i.adicionais.saborId]
+                                : []
+                              const saborNomes = sabIds
+                                .map(id => acaiOpcoes.sabores?.find((s: any) => s.id === id)?.nome || id)
+                                .filter(Boolean)
+                              const sorvIds: string[] = Array.isArray(i.adicionais.sorvetes)
+                                ? i.adicionais.sorvetes
+                                : i.adicionais.sorveteId
+                                ? [i.adicionais.sorveteId]
+                                : []
+                              const sorveteNomes = sorvIds
+                                .map(id => acaiOpcoes.sorvetes?.find((s: any) => s.id === id)?.nome || id)
+                                .filter(Boolean)
+                              const acompIds: string[] = Array.isArray(i.adicionais.acompanhamentos)
+                                ? i.adicionais.acompanhamentos
+                                : []
+                              const acompNomes = acompIds
+                                .map(id => acaiOpcoes.acompanhamentos?.find((a: any) => a.id === id)?.nome || id)
+                                .filter(Boolean)
+                              const cobIds: string[] = Array.isArray(i.adicionais.coberturas)
+                                ? i.adicionais.coberturas
+                                : i.adicionais.coberturaId
+                                ? [i.adicionais.coberturaId]
+                                : []
+                              const cobNomes = cobIds
+                                .map(id => acaiOpcoes.coberturas?.find((c: any) => c.id === id)?.nome || id)
+                                .filter(Boolean)
+                              const compIds: string[] = Array.isArray(i.adicionais.complementos)
+                                ? i.adicionais.complementos
+                                : []
+                              const compNomes = compIds
+                                .map(id => acaiOpcoes.complementos?.find((c: any) => c.id === id)?.nome || id)
+                                .filter(Boolean)
+                              return (
+                                <>
+                                  <div>
+                                    Sabor:{' '}
+                                    {saborNomes.length > 0
+                                      ? saborNomes.join(', ')
+                                      : i.adicionais.saborNome || 'Não informado'}
+                                  </div>
+                                  <div>
+                                    Sorvete:{' '}
+                                    {sorveteNomes.length > 0
+                                      ? sorveteNomes.join(', ')
+                                      : i.adicionais.sorveteNome || 'Sem sorvete'}
+                                  </div>
+                                  <div>
+                                    Acompanhamentos:{' '}
+                                    {acompNomes.length > 0 ? acompNomes.join(', ') : 'Nenhum'}
+                                  </div>
+                                  <div>
+                                    Cobertura:{' '}
+                                    {cobNomes.length > 0
+                                      ? cobNomes.join(', ')
+                                      : i.adicionais.coberturaNome || 'Não informada'}
+                                  </div>
+                                  <div>
+                                    Complementos:{' '}
+                                    {compNomes.length > 0 ? compNomes.join(', ') : 'Nenhum'}
+                                  </div>
+                                </>
+                              )
+                            })()}
                           </div>
                         )}
                       </li>
@@ -2260,7 +2293,16 @@ export default function ChatPage() {
                           <div className="mt-3 flex justify-end">
                             <button
                               className="px-3 py-1 rounded-full"
-                              onClick={() => setAdicionaisSelecionados((prev: any) => ({ ...prev, saboresOk: true }))}
+                              onClick={() =>
+                                setAdicionaisSelecionados((prev: any) => ({
+                                  ...prev,
+                                  saboresOk: true,
+                                  saborId:
+                                    Array.isArray(prev.sabores) && prev.sabores.length > 0
+                                      ? prev.sabores[0]
+                                      : prev.saborId || null
+                                }))
+                              }
                               disabled={!Array.isArray(adicionaisSelecionados.sabores) || adicionaisSelecionados.sabores.length === 0}
                               style={{
                                 backgroundColor:
@@ -2318,7 +2360,16 @@ export default function ChatPage() {
                           <div className="mt-3 flex justify-end">
                             <button
                               className="px-3 py-1 rounded-full"
-                              onClick={() => setAdicionaisSelecionados((prev: any) => ({ ...prev, sorvetesOk: true }))}
+                              onClick={() =>
+                                setAdicionaisSelecionados((prev: any) => ({
+                                  ...prev,
+                                  sorvetesOk: true,
+                                  sorveteId:
+                                    Array.isArray(prev.sorvetes) && prev.sorvetes.length > 0
+                                      ? prev.sorvetes[0]
+                                      : prev.sorveteId || null
+                                }))
+                              }
                               style={{ backgroundColor: theme.corPrimaria, color: '#fff' }}
                             >
                               Continuar
@@ -2416,7 +2467,16 @@ export default function ChatPage() {
                           <div className="mt-3 flex justify-end">
                             <button
                               className="px-3 py-1 rounded-full"
-                              onClick={() => setAdicionaisSelecionados((prev: any) => ({ ...prev, coberturasOk: true }))}
+                              onClick={() =>
+                                setAdicionaisSelecionados((prev: any) => ({
+                                  ...prev,
+                                  coberturasOk: true,
+                                  coberturaId:
+                                    Array.isArray(prev.coberturas) && prev.coberturas.length > 0
+                                      ? prev.coberturas[0]
+                                      : prev.coberturaId || null
+                                }))
+                              }
                               style={{ backgroundColor: theme.corPrimaria, color: '#fff' }}
                             >
                               Continuar

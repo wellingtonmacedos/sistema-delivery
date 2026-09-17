@@ -78,6 +78,7 @@ model Estabelecimento {
   categorias            Categoria[]
   combos                Combo[]
   cupons                Cupom[]
+  configuracaoPagamento Configuracao? @relation("ConfiguracaoPagamento")
   createdAt DateTime             @default(now())
 }
 
@@ -238,11 +239,15 @@ model Pagamento {
 }
 
 model Configuracao {
-  id            Int      @id @default(1)
-  taxaEntrega   Decimal? @db.Decimal(10, 2)
-  tempoEstimado Int?
-  pixApiKey     String?
-  pixChave      String?
+  id                 Int               @id @default(autoincrement())
+  estabelecimentoId  String?           @unique
+  estabelecimento    Estabelecimento?  @relation("ConfiguracaoPagamento", fields: [estabelecimentoId], references: [id], onDelete: Cascade)
+  taxaEntrega        Decimal?          @db.Decimal(10, 2)
+  tempoEstimado      Int?
+  pixApiKey          String?
+  pixChave           String?
+  pixBeneficiario    String?
+  pixCidade          String?
 }
 
 model AdminUser {
