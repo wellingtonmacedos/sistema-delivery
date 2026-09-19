@@ -79,7 +79,7 @@ export default function DistribuidoraEditarProduto() {
     setLoading(true)
     setError(null)
     try {
-      const r = await fetch(`/api/produtos/${id}`, { cache: 'no-store' })
+      const r = await fetch(`/api/admin/produtos/${id}`, { cache: 'no-store', credentials: 'include' })
       if (!r.ok) throw new Error('Produto não encontrado')
       const d = await r.json()
       const p = d.produto as ProdutoForm
@@ -147,8 +147,9 @@ export default function DistribuidoraEditarProduto() {
         destaque,
         controlarEstoque
       }
-      const r = await fetch(`/api/produtos/${id}`, {
+      const r = await fetch(`/api/admin/produtos/${id}`, {
         method: 'PUT',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       })
@@ -194,7 +195,7 @@ export default function DistribuidoraEditarProduto() {
   async function excluir() {
     if (!confirm('Tem certeza que deseja excluir este produto?')) return
     try {
-      const r = await fetch(`/api/produtos/${id}`, { method: 'DELETE' })
+      const r = await fetch(`/api/admin/produtos/${id}`, { method: 'DELETE', credentials: 'include' })
       if (r.ok) router.push('/admin/distribuidora/produtos')
     } catch {}
   }

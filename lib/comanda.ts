@@ -41,6 +41,7 @@ export function formatarEndereco(end: any): string[] {
 export function pagamentoLabel(tipo?: string | null): string {
   if (!tipo) return 'Não informado'
   const t = String(tipo).toLowerCase()
+  if (t === 'pix_entrega') return 'Pix na entrega'
   if (t.includes('pix')) return 'Pix'
   if (t.includes('dinheiro') || t === 'cash') return 'Dinheiro'
   if (t.includes('credito') || t.includes('crédito') || t.includes('credit'))

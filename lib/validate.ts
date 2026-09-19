@@ -131,7 +131,7 @@ export const PedidoCreateSchema = z.object({
   ),
   formaEntrega: z.enum(['entrega', 'retirada']),
   enderecoEntrega: z.any().nullable().optional(),
-  metodoPagamento: z.enum(['pix', 'dinheiro', 'cartao']).optional(),
+  metodoPagamento: z.enum(['pix', 'pix_entrega', 'dinheiro', 'cartao']).optional(),
   trocoPara: z.number().nonnegative().optional(),
   cupomCodigo: z.string().max(32).optional()
 })
@@ -151,7 +151,15 @@ export const ConfigSchema = z.object({
   pixApiKey: z.string().max(300).optional().or(z.null()),
   pixChave: z.string().max(200).optional().or(z.null()),
   pixBeneficiario: z.string().max(120).optional().or(z.null()),
-  pixCidade: z.string().max(60).optional().or(z.null())
+  pixCidade: z.string().max(60).optional().or(z.null()),
+  metodosPagamento: z
+    .object({
+      dinheiro: z.boolean().optional(),
+      cartao: z.boolean().optional(),
+      pix_online: z.boolean().optional(),
+      pix_entrega: z.boolean().optional()
+    })
+    .optional()
 })
 
 export const AcaiSaborCreateSchema = z.object({

@@ -5,6 +5,7 @@ import { useParams, useSearchParams } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 import { safePerfil, perfilLabel } from '@/lib/perfil'
 import { calcularStatusAbertura, type StatusAberturaResultado } from '@/lib/horarioFuncionamento'
+import { METODOS_PAGAMENTO_DEFAULT, type MetodosPagamentoCfg } from '@/lib/config'
 
 type Produto = {
   id: string
@@ -48,6 +49,18 @@ type TemaChatCfg = {
   sombraBaloes?: boolean
 }
 
+const ANTERIOR_ESTADO: Partial<Record<Estado, Estado>> = {
+  escolhendo_produto: 'escolhendo_categoria',
+  escolhendo_quantidade: 'escolhendo_produto',
+  escolhendo_adicionais: 'escolhendo_produto',
+  confirmando_itens: 'escolhendo_categoria',
+  confirmando_endereco: 'confirmando_itens',
+  cadastrando_endereco: 'confirmando_endereco',
+  escolhendo_pagamento: 'confirmando_endereco',
+  informando_troco: 'escolhendo_pagamento',
+  pesquisando_produto: 'menu_principal'
+}
+
 export default function ChatPage() {
   const params = useParams()
   const searchParams = useSearchParams()
@@ -85,7 +98,9 @@ export default function ChatPage() {
       subtotal: number
       descontoRecebido: number
     }[] | null
+    metodosPagamento?: MetodosPagamentoCfg | null
   } | null>(null)
+  const [metodosPagamento, setMetodosPagamento] = useState<MetodosPagamentoCfg>({ ...METODOS_PAGAMENTO_DEFAULT })
   const [cupomCodigo, setCupomCodigo] = useState<string>('')
   const [pedidoId, setPedidoId] = useState<string | null>(null)
   const [pix, setPix] = useState<{ txid: string; qrcode: string; copiaECola: string; simulado?: boolean } | null>(null)
@@ -142,6 +157,23 @@ export default function ChatPage() {
   const [tipoCompraPorProdutoId, setTipoCompraPorProdutoId] = useState<Record<string, 'unitario' | 'embalagem'>>({})
   const [quantidadePorProdutoId, setQuantidadePorProdutoId] = useState<Record<string, number>>({})
   const [valorMinimoPedido, setValorMinimoPedido] = useState<number | null>(null)
+  const [pixConfirmado, setPixConfirmado] = useState(false)
+  const [pixConfirmando, setPixConfirmando] = useState(false)
+
+  function voltarPasso() {
+    const anterior = ANTERIOR_ESTADO[estado]
+    if (!anterior) return
+    if (anterior === 'confirmando_itens' && carrinho.length === 0) {
+      setEstado('escolhendo_categoria')
+      return
+    }
+    setEstado(anterior)
+  }
+
+  function removerItem(idx: number) {
+    setCarrinho(c => c.filter((_, i) => i !== idx))
+    setResumoTotal(null)
+  }
 
   const limitSabores = produtoSelecionado?.maxSabores ?? acaiOpcoes?.config?.maxSabores ?? 1
   const limitSorvetes = produtoSelecionado?.maxSorvetes ?? acaiOpcoes?.config?.maxSorvetes ?? 1
@@ -780,6 +812,18 @@ export default function ChatPage() {
         if (ct.includes('application/json')) {
           const d = await r.json()
           if (typeof d?.total === 'number') {
+            if (d?.metodosPagamento && typeof d.metodosPagamento === 'object') {
+              const mpIn = d.metodosPagamento
+              const mpCfg: MetodosPagamentoCfg = {
+                dinheiro: typeof mpIn.dinheiro === 'boolean' ? mpIn.dinheiro : METODOS_PAGAMENTO_DEFAULT.dinheiro,
+                cartao: typeof mpIn.cartao === 'boolean' ? mpIn.cartao : METODOS_PAGAMENTO_DEFAULT.cartao,
+                pix_online: typeof mpIn.pix_online === 'boolean' ? mpIn.pix_online : METODOS_PAGAMENTO_DEFAULT.pix_online,
+                pix_entrega: typeof mpIn.pix_entrega === 'boolean' ? mpIn.pix_entrega : METODOS_PAGAMENTO_DEFAULT.pix_entrega
+              }
+              setMetodosPagamento(mpCfg)
+            } else {
+              setMetodosPagamento({ ...METODOS_PAGAMENTO_DEFAULT })
+            }
             setResumoTotal({
               total: d.total,
               taxaEntrega: Number(d.taxaEntrega || 0),
@@ -789,7 +833,8 @@ export default function ChatPage() {
               baseCalculoElegivel: typeof d?.baseCalculoElegivel === 'number' ? Number(d.baseCalculoElegivel) : null,
               categoriaLabel: typeof d?.categoriaLabel === 'string' && d.categoriaLabel ? d.categoriaLabel : null,
               produtoLabel: typeof d?.produtoLabel === 'string' && d.produtoLabel ? d.produtoLabel : null,
-              itensAplicados: Array.isArray(d?.itensAplicados) && d.itensAplicados.length > 0 ? d.itensAplicados : null
+              itensAplicados: Array.isArray(d?.itensAplicados) && d.itensAplicados.length > 0 ? d.itensAplicados : null,
+              metodosPagamento: d?.metodosPagamento && typeof d.metodosPagamento === 'object' ? d.metodosPagamento : null
             })
           } else {
             setResumoTotal(null)
@@ -807,7 +852,9 @@ export default function ChatPage() {
     setLoading(false)
   }
 
-  async function finalizarPedido(metodo: 'pix' | 'dinheiro' | 'cartao', trocoPara?: number) {
+  async function finalizarPedido(metodo: 'pix' | 'pix_entrega' | 'dinheiro' | 'cartao', trocoPara?: number) {
+    setPixConfirmado(false)
+    setPixConfirmando(false)
     if (statusAbertura && !statusAbertura.aberto) {
       const linhas = ['🔒 Atendimento fechado no momento.']
       if (statusAbertura?.motivo) linhas.push(statusAbertura.motivo)
@@ -896,8 +943,9 @@ export default function ChatPage() {
       } else {
         const total = Number(d?.pedido?.total || resumoTotal?.total || 0)
         const entregaTxt = formaEntrega === 'entrega' ? 'Entrega' : 'Retirada no balcão'
-        let pagamentoTxt =
-          metodo === 'dinheiro' ? 'Pagamento em dinheiro na entrega/retirada.' : 'Pagamento em cartão na entrega.'
+        let pagamentoTxt = 'Pagamento em cartão na entrega.'
+        if (metodo === 'dinheiro') pagamentoTxt = 'Pagamento em dinheiro na entrega/retirada.'
+        else if (metodo === 'pix_entrega') pagamentoTxt = 'Pagamento Pix no momento da entrega/retirada.'
         if (metodo === 'dinheiro' && typeof trocoPara === 'number' && trocoPara > 0 && total > 0) {
           const troco = Math.max(0, trocoPara - total)
           pagamentoTxt += `\nTroco para R$ ${trocoPara.toFixed(2)} (troco: R$ ${troco.toFixed(2)}).`
@@ -1294,10 +1342,10 @@ export default function ChatPage() {
                   </div>
                   <button
                     type="button"
-                    onClick={() => setEstado('escolhendo_categoria')}
+                    onClick={voltarPasso}
                     className="px-3 py-1 rounded-full text-xs border border-gray-300 bg-white"
                   >
-                    Voltar
+                    ← Voltar
                   </button>
                 </div>
                 <div className="mt-2">
@@ -1433,7 +1481,13 @@ export default function ChatPage() {
                 <div className="mt-2 text-xs text-gray-700">
                   Se precisar, informe quanto terá em dinheiro para calcular o troco:
                 </div>
-                <div className="mt-2 flex items-center gap-2">
+                <div className="mt-2 flex items-center gap-2 flex-wrap">
+                  <button
+                    className="px-3 py-1 rounded-full border text-xs"
+                    onClick={voltarPasso}
+                  >
+                    ← Voltar
+                  </button>
                   <input
                     type="number"
                     min={0}
@@ -1478,10 +1532,10 @@ export default function ChatPage() {
                       <div className="font-medium">Produtos em {categoriaSelecionada || 'categoria'}</div>
                       <button
                         type="button"
-                        onClick={() => setEstado('escolhendo_categoria')}
+                        onClick={voltarPasso}
                         className="px-3 py-1 rounded-full text-xs border border-gray-300 bg-white"
                       >
-                        Voltar
+                        ← Voltar
                       </button>
                     </div>
                     <div className="mt-3 space-y-2">
@@ -1588,8 +1642,17 @@ export default function ChatPage() {
                   </>
                 ) : perfil === 'ACAITERIA' ? (
                   <>
-                    <div>Qual tamanho de açaí você deseja?</div>
-                    <div className="mt-2 -mx-3 overflow-x-auto">
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <div>Qual tamanho de açaí você deseja?</div>
+                      <button
+                        type="button"
+                        onClick={voltarPasso}
+                        className="px-3 py-1 rounded-full text-xs border border-gray-300 bg-white flex-shrink-0"
+                      >
+                        ← Voltar
+                      </button>
+                    </div>
+                    <div className="-mx-3 overflow-x-auto">
                       <div className="flex gap-3 px-1 pb-2">
                         {produtos.map(p => {
                           const foto =
@@ -1636,8 +1699,17 @@ export default function ChatPage() {
                   </>
                 ) : (
                   <>
-                    <div>Selecione um produto:</div>
-                    <ul className="mt-2 space-y-2">
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <div>Selecione um produto:</div>
+                      <button
+                        type="button"
+                        onClick={voltarPasso}
+                        className="px-3 py-1 rounded-full text-xs border border-gray-300 bg-white flex-shrink-0"
+                      >
+                        ← Voltar
+                      </button>
+                    </div>
+                    <ul className="space-y-2">
                       {produtos.map(p => (
                         <li key={p.id} className="flex items-center justify-between gap-2">
                           <span>
@@ -1734,6 +1806,12 @@ export default function ChatPage() {
                               <div className="text-sm font-semibold text-gray-900">R$ {precoUnitario.toFixed(2)} / {unidade}</div>
                             )}
                             <div className="mt-3 flex items-center gap-2 flex-wrap">
+                              <button
+                                className="px-3 py-1 rounded-full border text-xs bg-white"
+                                onClick={voltarPasso}
+                              >
+                                ← Voltar
+                              </button>
                               <label className="text-xs text-gray-600" htmlFor="qtd-dist-qty">
                                 Quantidade ({tipoCompra === 'embalagem' ? 'embalagens' : unidade}):
                               </label>
@@ -1780,7 +1858,13 @@ export default function ChatPage() {
                 ) : (
                   <>
                     Quantas unidades você deseja?
-                    <div className="mt-2 flex items-center gap-2">
+                    <div className="mt-2 flex items-center gap-2 flex-wrap">
+                      <button
+                        className="px-3 py-1 rounded-full border text-xs bg-white"
+                        onClick={voltarPasso}
+                      >
+                        ← Voltar
+                      </button>
                       <input
                         type="number"
                         min={1}
@@ -1813,7 +1897,16 @@ export default function ChatPage() {
                     {avisoRepetirPedido}
                   </div>
                 )}
-                Itens selecionados:
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <div className="font-medium">Itens selecionados:</div>
+                  <button
+                    type="button"
+                    onClick={voltarPasso}
+                    className="px-3 py-1 rounded-full text-xs border border-gray-300 bg-white flex-shrink-0"
+                  >
+                    ← Voltar
+                  </button>
+                </div>
                 <ul className="mt-2 space-y-1">
                   {carrinho.map((i, idx) => {
                     const tp = i.adicionais?.tipoCompra === 'embalagem' ? 'embalagem' : 'unitario'
@@ -1823,19 +1916,31 @@ export default function ChatPage() {
                     const subt = precoUsado * Math.max(1, Number(i.quantidade || 1))
                     return (
                       <li key={idx} className="text-sm">
-                        <div className="font-medium">
-                          {i.produto.nome} x {i.quantidade}
-                          {tp === 'embalagem' && (
-                            <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[11px] font-medium">
-                              📦 Embalagem
-                              {i.produto && (i.produto as any).qtdPorEmbalagem ? (
-                                <span>(com {(i.produto as any).qtdPorEmbalagem} unidades)</span>
-                              ) : null}
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-xs text-gray-600 mt-0.5">
-                          Subtotal: R$ {subt.toFixed(2).replace('.', ',')}
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1">
+                            <div className="font-medium">
+                              {i.produto.nome} x {i.quantidade}
+                              {tp === 'embalagem' && (
+                                <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[11px] font-medium">
+                                  📦 Embalagem
+                                  {i.produto && (i.produto as any).qtdPorEmbalagem ? (
+                                    <span>(com {(i.produto as any).qtdPorEmbalagem} unidades)</span>
+                                  ) : null}
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-xs text-gray-600 mt-0.5">
+                              Subtotal: R$ {subt.toFixed(2).replace('.', ',')}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => removerItem(idx)}
+                            className="mt-0.5 flex-shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-red-200 bg-red-50 text-red-700 text-[11px] font-medium hover:bg-red-100"
+                            title="Remover este item do carrinho"
+                          >
+                            ✕ Remover
+                          </button>
                         </div>
                         {perfil === 'ACAITERIA' && acaiOpcoes && i.adicionais && (
                           <div className="mt-1 text-xs text-gray-700 space-y-0.5">
@@ -1945,7 +2050,13 @@ export default function ChatPage() {
                           )}
                         </div>
                       )}
-                      <div className="mt-3 flex gap-2">
+                      <div className="mt-3 flex gap-2 flex-wrap">
+                        <button
+                          className="px-3 py-1 rounded-full border text-xs"
+                          onClick={voltarPasso}
+                        >
+                          ← Voltar
+                        </button>
                         <button
                           className="px-3 py-1 rounded-full border border-gray-300 hover:bg-gray-200"
                           onClick={() => {
@@ -1978,12 +2089,24 @@ export default function ChatPage() {
             <div className="flex">
               <div className="max-w-[85%] rounded-2xl rounded-tl-sm bg-gray-100 text-gray-900 px-3 py-2">
                 Escolha a forma de entrega:
-                <div className="mt-2 flex gap-2">
-                  <button className="px-3 py-1 rounded-full border" onClick={() => (setFormaEntrega('retirada'), mostrarResumoTotal())}>
+                <div className="mt-2 flex gap-2 flex-wrap">
+                  <button
+                    className="px-3 py-1 rounded-full border"
+                    onClick={() => (setFormaEntrega('retirada'), mostrarResumoTotal())}
+                  >
                     Retirada
                   </button>
-                  <button className="px-3 py-1 rounded-full border" onClick={() => setFormaEntrega('entrega')}>
+                  <button
+                    className="px-3 py-1 rounded-full border"
+                    onClick={() => setFormaEntrega('entrega')}
+                  >
                     Entrega
+                  </button>
+                  <button
+                    className="px-3 py-1 rounded-full border text-xs"
+                    onClick={voltarPasso}
+                  >
+                    ← Voltar
                   </button>
                 </div>
                 {formaEntrega === 'entrega' && (() => {
@@ -2046,9 +2169,9 @@ export default function ChatPage() {
                   <input className="w-full border rounded-lg px-2 py-1" placeholder="Bairro" onChange={e => setEndereco((prev: any) => ({ ...(prev || {}), bairro: e.target.value }))} />
                   <input className="w-full border rounded-lg px-2 py-1" placeholder="Complemento (opcional)" onChange={e => setEndereco((prev: any) => ({ ...(prev || {}), complemento: e.target.value }))} />
                   <input className="w-full border rounded-lg px-2 py-1" placeholder="Referência (opcional)" onChange={e => setEndereco((prev: any) => ({ ...(prev || {}), referencia: e.target.value }))} />
-                  <div className="flex gap-2">
-                    <button className="px-3 py-1 rounded-full border" onClick={() => setEstado('confirmando_endereco')}>
-                      Voltar
+                  <div className="flex gap-2 flex-wrap">
+                    <button className="px-3 py-1 rounded-full border" onClick={voltarPasso}>
+                      ← Voltar
                     </button>
                     <button className="px-3 py-1 rounded-full text-white" onClick={salvarEnderecoComoPadrao} style={{ backgroundColor: theme.corPrimaria }}>
                       Salvar e continuar
@@ -2134,20 +2257,42 @@ export default function ChatPage() {
                 <div className="mt-3">Como deseja pagar?</div>
                 <div className="mt-2 flex gap-2 flex-wrap">
                   <button
-                    className="px-3 py-1 rounded-full border"
-                    onClick={() => {
-                      setTrocoValor('')
-                      setEstado('informando_troco')
-                    }}
+                    className="px-3 py-1 rounded-full border text-xs"
+                    onClick={voltarPasso}
                   >
-                    Dinheiro
+                    ← Voltar
                   </button>
-                  <button className="px-3 py-1 rounded-full border" onClick={() => finalizarPedido('cartao')}>
-                    Cartão
-                  </button>
-                  <button className="px-3 py-1 rounded-full" onClick={() => finalizarPedido('pix')} style={{ backgroundColor: theme.corPrimaria, color: '#fff' }}>
-                    Pix
-                  </button>
+                  {metodosPagamento.dinheiro && (
+                    <button
+                      className="px-3 py-1 rounded-full border"
+                      onClick={() => {
+                        setTrocoValor('')
+                        setEstado('informando_troco')
+                      }}
+                    >
+                      💵 Dinheiro
+                    </button>
+                  )}
+                  {metodosPagamento.cartao && (
+                    <button className="px-3 py-1 rounded-full border" onClick={() => finalizarPedido('cartao')}>
+                      💳 Cartão
+                    </button>
+                  )}
+                  {metodosPagamento.pix_online && (
+                    <button className="px-3 py-1 rounded-full" onClick={() => finalizarPedido('pix')} style={{ backgroundColor: theme.corPrimaria, color: '#fff' }}>
+                      📱 Pix (online)
+                    </button>
+                  )}
+                  {metodosPagamento.pix_entrega && (
+                    <button className="px-3 py-1 rounded-full border" onClick={() => finalizarPedido('pix_entrega')}>
+                      📱 Pix na entrega
+                    </button>
+                  )}
+                  {!metodosPagamento.dinheiro && !metodosPagamento.cartao && !metodosPagamento.pix_online && !metodosPagamento.pix_entrega && (
+                    <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                      Sem meios de pagamento disponíveis no momento. Contate a loja.
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -2163,6 +2308,11 @@ export default function ChatPage() {
                     </span>
                   )}
                 </div>
+                {pedidoId && (
+                  <div className="text-xs text-gray-600 mt-1">
+                    Pedido: <span className="font-mono font-semibold">{pedidoId}</span>
+                  </div>
+                )}
                 <div className="text-sm mt-1">TxID: {pix.txid}</div>
                 <div className="mt-2">
                   {pix.qrcode && (typeof pix.qrcode !== 'string' || pix.qrcode.startsWith('data:')) ? (
@@ -2189,6 +2339,109 @@ export default function ChatPage() {
                   >
                     📋 Copiar código Pix
                   </button>
+                </div>
+                <div className="mt-4 pt-3 border-t border-black/10 space-y-2">
+                  {!pixConfirmado ? (
+                    <>
+                      <div className="text-xs text-gray-700">
+                        ⚠️ Após pagar no app do seu banco, clique em <b>"Já paguei"</b> abaixo para notificar a loja.
+                        O status atualiza automaticamente no painel administrativo.
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          className={`px-3 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1 ${pixConfirmando ? 'opacity-60 cursor-not-allowed' : ''}`}
+                          style={{ backgroundColor: theme.corPrimaria, color: '#fff' }}
+                          disabled={pixConfirmando || !pedidoId}
+                          onClick={async () => {
+                            if (pixConfirmando || !pedidoId) return
+                            setPixConfirmando(true)
+                            try {
+                              const r = await fetch('/api/pix/confirmar', {
+                                method: 'POST',
+                                headers: headersWith({ 'Content-Type': 'application/json' }),
+                                body: JSON.stringify({ pedidoId })
+                              })
+                              const d = await r.json().catch(() => null)
+                              if (r.ok && d?.ok) {
+                                setPixConfirmado(true)
+                                const total = Number(resumoTotal?.total || 0)
+                                const codigo = pedidoCodigoCurto(pedidoId)
+                                setMensagens(m => [
+                                  ...m,
+                                  {
+                                    de: 'bot',
+                                    texto: `✅ Pagamento confirmado!\n\nPedido ${codigo} pago via Pix.\nTotal: R$ ${Number(total || 0).toFixed(2)}\nSeu pedido foi enviado para o preparo. 🎉\n⏱ Tempo estimado: 15–25 minutos.`
+                                  }
+                                ])
+                                enviarMensagensBot([
+                                  'Deseja enviar o pedido para o WhatsApp da loja\npara agilizar o preparo? 📲',
+                                  'Enquanto seu pedido fica pronto,\nque tal jogar um pouco? 🎮'
+                                ])
+                                conviteWhatsAppPedidoIdRef.current = pedidoId
+                                conviteJogoPedidoIdRef.current = pedidoId
+                                lastPedidoStatusRef.current = 'preparando'
+                                setMostrarAcoesPedido(true)
+                                setMostrarAcoesWhatsApp(true)
+                                if (resumoTotal && typeof resumoTotal.total === 'number') {
+                                  const nomeCliente = (clienteNomeDb || `${nome} ${sobrenome}`.trim() || 'Cliente').trim()
+                                  setPedidoWhatsApp({
+                                    codigo,
+                                    cliente_nome: nomeCliente,
+                                    cliente_telefone: telefone,
+                                    total: Number(resumoTotal.total),
+                                    items: carrinho.map(i => ({ quantidade: i.quantidade, nome: i.produto.nome }))
+                                  })
+                                }
+                              } else {
+                                const erroMsg = String(d?.error || 'Não foi possível confirmar. Tente novamente em alguns segundos.')
+                                setMensagens(m => [
+                                  ...m,
+                                  {
+                                    de: 'bot',
+                                    texto: `⚠️ ${erroMsg}\n\nSe já pagou, aguarde alguns segundos e tente novamente. O pagamento pode levar até 30s para ser confirmado.`
+                                  }
+                                ])
+                              }
+                            } catch {
+                              setMensagens(m => [
+                                ...m,
+                                {
+                                  de: 'bot',
+                                  texto: '⚠️ Erro ao confirmar pagamento. Tente novamente ou contate a loja.'
+                                }
+                              ])
+                            } finally {
+                              setPixConfirmando(false)
+                            }
+                          }}
+                        >
+                          {pixConfirmando ? 'Confirmando...' : '✅ Já paguei'}
+                        </button>
+                        <button
+                          className="px-3 py-2 rounded-lg text-xs border bg-white font-medium"
+                          onClick={() => {
+                            if (!confirm('Tem certeza que deseja cancelar e escolher outra forma de pagamento?')) return
+                            setPix(null)
+                            setPixConfirmado(false)
+                            setPixConfirmando(false)
+                            if (resumoTotal) {
+                              setEstado('escolhendo_pagamento')
+                            }
+                          }}
+                        >
+                          Cancelar / outro pagamento
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex items-start gap-2 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2 text-emerald-800">
+                      <div className="text-2xl">✅</div>
+                      <div className="text-xs">
+                        <div className="font-semibold text-sm">Pagamento confirmado com sucesso!</div>
+                        <div className="mt-0.5">Status atualizado no painel administrativo.</div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -2563,7 +2816,13 @@ export default function ChatPage() {
                   </>
                 )}
                 {perfil === 'ACAITERIA' ? (
-                  <div className="mt-3 flex justify-end">
+                  <div className="mt-3 flex items-center justify-between gap-2 flex-wrap">
+                    <button
+                      className="px-3 py-1 rounded-full border text-xs bg-white"
+                      onClick={voltarPasso}
+                    >
+                      ← Voltar
+                    </button>
                     <button
                       className="px-3 py-1 rounded-full"
                       onClick={() => {
@@ -2580,7 +2839,13 @@ export default function ChatPage() {
                     </button>
                   </div>
                 ) : (
-                  <div className="mt-3 flex justify-end">
+                  <div className="mt-3 flex items-center justify-between gap-2 flex-wrap">
+                    <button
+                      className="px-3 py-1 rounded-full border text-xs bg-white"
+                      onClick={voltarPasso}
+                    >
+                      ← Voltar
+                    </button>
                     <button className="px-3 py-1 rounded-full" onClick={adicionarItem} style={{ backgroundColor: theme.corPrimaria, color: '#fff' }}>
                       Confirmar
                     </button>

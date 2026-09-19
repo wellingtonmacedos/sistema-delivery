@@ -107,15 +107,17 @@ export default function AcaiteriaProdutosPage() {
 
     let r
     if (editingId) {
-      r = await fetch('/api/produtos/' + editingId, {
+      r = await fetch('/api/admin/produtos/' + editingId, {
         method: 'PUT',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       })
     } else {
-      r = await fetch('/api/produtos', {
+      r = await fetch('/api/admin/produtos', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(est?.slug ? { 'x-estabelecimento-slug': est.slug } : {}) } as any,
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       })
     }
@@ -159,13 +161,14 @@ export default function AcaiteriaProdutosPage() {
   }
 
   async function excluir(id: string) {
-    const r = await fetch('/api/produtos/' + id, { method: 'DELETE' })
+    const r = await fetch('/api/admin/produtos/' + id, { method: 'DELETE', credentials: 'include' })
     if (r.ok) carregar()
   }
 
   async function toggleAtivo(p: Produto) {
-    const r = await fetch('/api/produtos/' + p.id, {
+    const r = await fetch('/api/admin/produtos/' + p.id, {
       method: 'PUT',
+      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ativo: !p.ativo })
     })

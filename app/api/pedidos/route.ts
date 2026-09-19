@@ -8,7 +8,7 @@ import { revalidateTag } from 'next/cache'
 import { resolveTenant, safePerfil } from '@/lib/tenant'
 import { validarCupomUso } from '@/lib/cupom'
 import { calcularStatusAbertura } from '@/lib/horarioFuncionamento'
-import { getConfiguracao } from '@/lib/config'
+import { getConfiguracao, metodoHabilitado, normalizarMetodosPagamento } from '@/lib/config'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
@@ -217,6 +217,15 @@ export async function POST(req: NextRequest) {
     }
   }
   const config = await getConfiguracao(estId)
+  const metodosPagamentoCfg = normalizarMetodosPagamento((config as any)?.metodosPagamento)
+  if (metodoPagamento) {
+    if (!metodoHabilitado(metodosPagamentoCfg, metodoPagamento)) {
+      return Response.json(
+        { error: `Método de pagamento "${metodoPagamento}" não está habilitado para este estabelecimento.` },
+        { status: 400 }
+      )
+    }
+  }
   const taxaBase =
     est && est.taxaEntregaPadrao != null ? Number(est.taxaEntregaPadrao) : Number(config?.taxaEntrega || 0)
   const taxaEntrega = formaEntrega === FormaEntrega.entrega ? taxaBase : 0
@@ -298,7 +307,7 @@ export async function POST(req: NextRequest) {
       create: { pedidoId: pedido.id, tipo: metodoPagamento, valor: pedido.total, status: 'pendente' }
     })
   }
-  await logSistema('pedido_criado', `Pedido ${pedido.id} total=${total}`)
+  await logSistema('pedido_criado', `Pedido ${pedido.id} total=${total} metodo=${metodoPagamento || 'nao_informado'}`)
   revalidateTag('pedidos')
   return Response.json({ pedido, taxaEntrega, cupomAplicado, cupomMotivo })
 }

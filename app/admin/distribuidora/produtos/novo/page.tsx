@@ -87,8 +87,9 @@ export default function DistribuidoraNovoProduto() {
         controlarEstoque,
         fotoUrl: null
       }
-      const r = await fetch('/api/produtos', {
+      const r = await fetch('/api/admin/produtos', {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       })

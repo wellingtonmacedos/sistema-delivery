@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   currency,
   resumoFinanceiro,
@@ -70,6 +70,125 @@ type Props = {
   opcoesAcai: OpcoesAcai
 }
 
+function getCssComanda58(isCompleto: boolean): string {
+  const fontSize = isCompleto ? '10.5px' : '10px'
+  return `
+    @page { size: 58mm auto; margin: 0; }
+    html, body { background: #fff; color: #000; }
+    #comanda-root {
+      width: 58mm;
+      max-width: 58mm;
+      margin: 0 auto;
+      padding: 2mm 1.5mm 3mm;
+      font-family: 'Courier New', 'Courier', monospace;
+      font-size: ${fontSize};
+      line-height: 1.35;
+      color: #000;
+      background: #fff;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    @media screen {
+      html, body { margin: 0; padding: 0; background: #e5e7eb !important; }
+      body { overflow-x: hidden; }
+      body aside,
+      body > div:first-child > aside,
+      body .no-print-ui,
+      header, nav, footer,
+      body [data-admin-ui],
+      .no-print {
+        display: none !important;
+      }
+      main:has(> div > #comanda-root),
+      body div[class*="pl-64"],
+      body div[class*="md:pl-64"] {
+        padding-left: 0 !important;
+        margin-left: 0 !important;
+      }
+      #comanda-root {
+        box-shadow: 0 4px 18px rgba(0,0,0,0.12);
+        margin: 16px auto 24px auto;
+        display: block;
+      }
+    }
+    @media print {
+      html, body,
+      body > div,
+      body > div > div,
+      body > div > div > div,
+      body > div > div > div > main,
+      main,
+      main > div,
+      main > div > div {
+        margin: 0 !important;
+        padding: 0 !important;
+        background: #fff !important;
+        box-shadow: none !important;
+        width: 100% !important;
+        max-width: 100% !important;
+      }
+      body aside,
+      body .no-print-ui,
+      header, nav, footer,
+      body [data-admin-ui],
+      .no-print,
+      body > * > *:not(#__next):not(main):not(div),
+      .\\@admin-layout-wrapper > *:not(#comanda-root-parent),
+      main > div > div > *:not(#comanda-root-parent):not(:has(#comanda-root)) {
+        display: none !important;
+      }
+      #comanda-root-parent,
+      body:has(#comanda-root) > *,
+      main:has(#comanda-root),
+      main > div:has(#comanda-root),
+      main > div > div:has(#comanda-root),
+      main > div > div > div:has(#comanda-root),
+      body div:has(> #comanda-root) {
+        display: block !important;
+        visibility: visible !important;
+        margin: 0 !important;
+        padding: 0 !important;
+      }
+      #comanda-root {
+        position: absolute !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: auto !important;
+        bottom: auto !important;
+        z-index: 2147483647 !important;
+        box-shadow: none !important;
+        margin: 0 !important;
+        padding: 0 1mm 1mm !important;
+        width: 58mm !important;
+        max-width: 58mm !important;
+        background: #fff !important;
+        visibility: visible !important;
+        display: block !important;
+      }
+      body {
+        visibility: hidden !important;
+      }
+      #comanda-root,
+      #comanda-root *,
+      body:has(#comanda-root),
+      html:has(#comanda-root) {
+        visibility: visible !important;
+      }
+    }
+    .break-inside-avoid { break-inside: avoid; page-break-inside: avoid; }
+    .text-bold { font-weight: 700; }
+    .text-center { text-align: center; }
+    .text-right { text-align: right; }
+    .uppercase { text-transform: uppercase; }
+    .row { display: flex; justify-content: space-between; align-items: flex-start; gap: 2mm; }
+    .col-left { flex: 1 1 auto; min-width: 0; word-break: break-word; }
+    .col-right { flex: 0 0 auto; text-align: right; white-space: nowrap; }
+    .sep { border-top: 1px dashed #000; margin: 1.2mm 0; }
+    .item-line { margin-top: 1mm; break-inside: avoid; page-break-inside: avoid; }
+    .sub { margin-left: 2mm; color: #111; }
+  `
+}
+
 export default function Comanda58(props: Props) {
   const {
     modo,
@@ -80,15 +199,57 @@ export default function Comanda58(props: Props) {
     opcoesAcai
   } = props
 
+  const isCompleto = modo === 'completo'
+  const cssInline = getCssComanda58(isCompleto)
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  const placeholderRef = useRef<HTMLSpanElement | null>(null)
+  const montadoRef = useRef(false)
+
   useEffect(() => {
     if (typeof window === 'undefined') return
+    if (montadoRef.current) return
+    montadoRef.current = true
+    try {
+      const existingStyle = document.getElementById('comanda58-inline-style')
+      if (!existingStyle) {
+        const s = document.createElement('style')
+        s.id = 'comanda58-inline-style'
+        s.setAttribute('data-comanda', 'true')
+        s.textContent = getCssComanda58(isCompleto)
+        document.head.appendChild(s)
+      }
+    } catch {}
     const t = setTimeout(() => {
       try {
-        window.print()
-      } catch {}
+        const root = document.getElementById('comanda-root')
+        if (root && root.parentElement && root.parentElement.tagName !== 'BODY') {
+          const placeholder = document.createElement('span')
+          placeholder.id = 'comanda-placeholder-restore'
+          placeholder.style.display = 'none'
+          root.parentElement.insertBefore(placeholder, root)
+          placeholderRef.current = placeholder
+          document.body.appendChild(root)
+        }
+        setTimeout(() => {
+          try { window.print() } catch {}
+        }, 150)
+      } catch (e) {
+        try { window.print() } catch {}
+      }
     }, 500)
-    return () => clearTimeout(t)
-  }, [])
+    return () => {
+      clearTimeout(t)
+      try {
+        const root = document.getElementById('comanda-root')
+        const placeholder = placeholderRef.current || document.getElementById('comanda-placeholder-restore')
+        if (root && placeholder && placeholder.parentElement) {
+          placeholder.parentElement.insertBefore(root, placeholder)
+          placeholder.remove()
+          placeholderRef.current = null
+        }
+      } catch {}
+    }
+  }, [isCompleto])
 
   const { subtotal, desconto, taxaEntrega, total } = resumoFinanceiro({
     itens,
@@ -103,73 +264,13 @@ export default function Comanda58(props: Props) {
   const lineSeparator = '—'.repeat(32)
   const lineSeparatorThin = '-'.repeat(32)
 
-  const isCompleto = modo === 'completo'
-
   return (
-    <div id="comanda-root">
-      <style>{`
-        @page { size: 58mm auto; margin: 0; }
-        html, body { background: #fff; color: #000; }
-        #comanda-root {
-          width: 58mm;
-          max-width: 58mm;
-          margin: 0 auto;
-          padding: 2mm 1.5mm 3mm;
-          font-family: 'Courier New', 'Courier', monospace;
-          font-size: ${isCompleto ? '10.5px' : '10px'};
-          line-height: 1.35;
-          color: #000;
-          background: #fff;
-          -webkit-print-color-adjust: exact;
-          print-color-adjust: exact;
-        }
-        @media screen {
-          html, body { margin: 0; padding: 0; background: #e5e7eb !important; }
-          body { overflow-x: hidden; }
-          /* Esconder sidebar/header do admin/layout para visualização limpa */
-          body aside,
-          body > div:first-child > aside,
-          body .no-print-ui,
-          header, nav, footer,
-          body [data-admin-ui],
-          body > * > *:not(#__next):not(main):not(div),
-          .\\@admin-layout-wrapper > *:not(#comanda-root-parent) {
-            display: none !important;
-          }
-          /* Forçar não ter padding lateral do admin layout */
-          main:has(> div > #comanda-root),
-          body div[class*="pl-64"],
-          body div[class*="md:pl-64"] {
-            padding-left: 0 !important;
-            margin-left: 0 !important;
-          }
-          #comanda-root {
-            box-shadow: 0 4px 18px rgba(0,0,0,0.12);
-            margin: 16px auto 24px auto;
-            display: block;
-          }
-        }
-        @media print {
-          body > *:not(#__next):not(#comanda-root), 
-          aside, nav, header, footer, .no-print { display: none !important; }
-          #comanda-root {
-            box-shadow: none !important;
-            margin: 0 !important;
-            padding: 0 1mm 1mm !important;
-          }
-        }
-        .break-inside-avoid { break-inside: avoid; page-break-inside: avoid; }
-        .text-bold { font-weight: 700; }
-        .text-center { text-align: center; }
-        .text-right { text-align: right; }
-        .uppercase { text-transform: uppercase; }
-        .row { display: flex; justify-content: space-between; align-items: flex-start; gap: 2mm; }
-        .col-left { flex: 1 1 auto; min-width: 0; word-break: break-word; }
-        .col-right { flex: 0 0 auto; text-align: right; white-space: nowrap; }
-        .sep { border-top: 1px dashed #000; margin: 1.2mm 0; }
-        .item-line { margin-top: 1mm; break-inside: avoid; page-break-inside: avoid; }
-        .sub { margin-left: 2mm; color: #111; }
-      `}</style>
+    <div id="comanda-root-parent" style={{ display: 'block' }} suppressHydrationWarning>
+      <div id="comanda-root" ref={rootRef} suppressHydrationWarning>
+        <style
+          suppressHydrationWarning
+          dangerouslySetInnerHTML={{ __html: cssInline }}
+        />
 
       {/* ===== CABEÇALHO ===== */}
       <div className="text-center break-inside-avoid">
@@ -399,6 +500,7 @@ export default function Comanda58(props: Props) {
 
       {/* Para impressora térmica cortar papel: branco no final */}
       <div style={{ height: isCompleto ? '6mm' : '4mm' }}></div>
+    </div>
     </div>
   )
 }

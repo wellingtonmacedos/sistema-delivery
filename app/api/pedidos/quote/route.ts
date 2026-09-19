@@ -6,7 +6,7 @@ import { rateLimit, keyFromRequestHeaders } from '@/lib/rateLimit'
 import { resolveTenant, safePerfil } from '@/lib/tenant'
 import { validarCupomUso } from '@/lib/cupom'
 import { calcularStatusAbertura } from '@/lib/horarioFuncionamento'
-import { getConfiguracao } from '@/lib/config'
+import { getConfiguracao, normalizarMetodosPagamento } from '@/lib/config'
 
 type PedidoItemInput = {
   produtoId: string
@@ -107,6 +107,7 @@ export async function POST(req: NextRequest) {
       }
     }
     const config = await getConfiguracao(est?.id || null)
+    const metodosPagamento = normalizarMetodosPagamento((config as any)?.metodosPagamento)
     const taxaBase =
       est && est.taxaEntregaPadrao != null ? Number(est.taxaEntregaPadrao) : Number(config?.taxaEntrega || 0)
     const taxaEntrega = formaEntrega === FormaEntrega.entrega ? taxaBase : 0
@@ -133,7 +134,8 @@ export async function POST(req: NextRequest) {
       baseCalculoElegivel: cupom.baseCalculoElegivel,
       categoriaLabel: cupom.categoriaLabel || null,
       produtoLabel: cupom.produtoLabel || null,
-      itensAplicados: cupom.itensAplicados && cupom.itensAplicados.length > 0 ? cupom.itensAplicados : null
+      itensAplicados: cupom.itensAplicados && cupom.itensAplicados.length > 0 ? cupom.itensAplicados : null,
+      metodosPagamento
     })
   } catch (e: any) {
     const msg = e?.message ? String(e.message) : 'quote_indisponivel'

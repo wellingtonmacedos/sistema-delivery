@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { safePerfil } from '@/lib/perfil'
+import { pagamentoLabel } from '@/lib/comanda'
 
 type PedidoItem = {
   id: string
@@ -535,7 +536,7 @@ export default function AdminPedidos() {
   function renderCard(p: Pedido) {
     const { subtotal, desconto, taxaEntrega } = resumoFinanceiro(p)
     const pagamentoStatus = p.pagamento?.status || 'desconhecido'
-    const pagamentoTipo = p.pagamento?.tipo || 'n/d'
+    const pagamentoTipo = pagamentoLabel(p.pagamento?.tipo || null)
     const data = new Date(p.createdAt)
     const pedidoPendente = p.status === 'aberto' || p.status === 'aguardando_pix'
     return (
